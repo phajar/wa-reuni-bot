@@ -308,6 +308,9 @@ async function connectToWhatsApp() {
             } else if (command === '!status') {
                 console.log(`[WA BOT] Perintah !status dari ${jid}`);
                 await handleStatusCommand(jid, m);
+            } else if (command === '!undangan') {
+                console.log(`[WA BOT] Perintah !undangan dari ${jid}`);
+                await handleUndanganCommand(jid, m);
             }
         } catch (err) {
             console.error('[WA BOT] Gagal memproses pesan masuk:', err);
@@ -383,6 +386,9 @@ async function startServer() {
     
     // 6. Initialize Audit Log Listener
     initAuditLogListener(db);
+    
+    // 7. Initialize Finance Receipt Listener
+    initFinanceReceiptListener(db);
 }
 
 // Start Baileys WhatsApp Connection
@@ -738,6 +744,144 @@ app.post('/send-message', authenticateApiKey, async (req, res) => {
         return res.json({ success: true });
     } catch (error) {
         console.error('[WA BOT] Failed to send message:', error);
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// POST Endpoint to send status/story update
+app.post('/send-status', authenticateApiKey, async (req, res) => {
+    const { message, fileUrl, fileType } = req.body;
+
+    if (!message && !fileUrl) {
+        return res.status(400).json({ success: false, error: 'Message or file is required.' });
+    }
+
+    if (connectionStatus !== 'open' || !sock) {
+        return res.status(503).json({ success: false, error: 'WhatsApp bot is not connected.' });
+    }
+
+    try {
+        // Fetch all approved alumni to form statusJidList
+        const statusJidList = [];
+        try {
+            const alumniCol = collection(db, 'alumni');
+            const q = query(alumniCol, where('status', '==', 'approved'));
+            const querySnapshot = await getDocs(q);
+            querySnapshot.forEach(doc => {
+                const data = doc.data();
+                if (data.nowa) {
+                    let cleanPhone = data.nowa.replace(/\D/g, '');
+                    if (cleanPhone.startsWith('08')) {
+                        cleanPhone = '628' + cleanPhone.substring(2);
+                    }
+                    const jid = `${cleanPhone}@s.whatsapp.net`;
+                    if (!statusJidList.includes(jid)) {
+                        statusJidList.push(jid);
+                    }
+                }
+            });
+            console.log(`[WA BOT] Generated statusJidList with ${statusJidList.length} approved alumni.`);
+        } catch (dbErr) {
+            console.warn('[WA BOT] Failed to fetch alumni for statusJidList:', dbErr.message);
+        }
+
+        // Add standard admin numbers to the list just in case
+        try {
+            const botConfigSnap = await getDoc(doc(db, 'settings', 'wa_bot_config'));
+            if (botConfigSnap.exists) {
+                const botConfig = botConfigSnap.data();
+                if (botConfig.approval_admins) {
+                    const admins = botConfig.approval_admins.split(',');
+                    admins.forEach(admin => {
+                        let cleanAdmin = admin.trim().replace(/\D/g, '');
+                        if (cleanAdmin.startsWith('08')) {
+                            cleanAdmin = '628' + cleanAdmin.substring(2);
+                        }
+                        if (cleanAdmin) {
+                            const jid = `${cleanAdmin}@s.whatsapp.net`;
+                            if (!statusJidList.includes(jid)) {
+                                statusJidList.push(jid);
+                            }
+                        }
+                    });
+                }
+            }
+        } catch (configErr) {
+            console.warn('[WA BOT] Failed to load config admins for statusJidList:', configErr.message);
+        }
+
+        // Send options
+        const sendOptions = {
+            broadcast: true
+        };
+        if (statusJidList.length > 0) {
+            sendOptions.statusJidList = statusJidList;
+        }
+
+        if (fileUrl) {
+            console.log(`[WA BOT] Sending status media: URL=${fileUrl.startsWith('data:') ? 'base64_data' : fileUrl}, Type=${fileType}`);
+            let isImage = false;
+            let mediaContent;
+            let mimeType;
+
+            if (fileUrl.startsWith('data:')) {
+                const matches = fileUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+                if (matches && matches.length === 3) {
+                    mimeType = matches[1];
+                    const base64Data = matches[2];
+                    mediaContent = Buffer.from(base64Data, 'base64');
+                    isImage = mimeType.startsWith('image/');
+                } else {
+                    return res.status(400).json({ success: false, error: 'Invalid data URI format.' });
+                }
+            } else {
+                if (fileType) {
+                    isImage = ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(fileType.toLowerCase());
+                } else {
+                    const ext = fileUrl.split('.').pop().toLowerCase();
+                    isImage = ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext);
+                }
+                
+                if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) {
+                    mediaContent = { url: fileUrl };
+                } else {
+                    let localPath = fileUrl;
+                    if (localPath.startsWith('file://')) {
+                        localPath = decodeURIComponent(localPath.replace(/^file:\/\/\/?/, ''));
+                    }
+                    if (fs.existsSync(localPath)) {
+                        mediaContent = fs.readFileSync(localPath);
+                    } else {
+                        mediaContent = { url: fileUrl };
+                    }
+                }
+                mimeType = isImage ? `image/${fileType || 'jpeg'}` : 'video/mp4';
+            }
+
+            if (isImage) {
+                await sock.sendMessage('status@broadcast', {
+                    image: mediaContent,
+                    caption: message || ''
+                }, sendOptions);
+            } else {
+                await sock.sendMessage('status@broadcast', {
+                    video: mediaContent,
+                    caption: message || '',
+                    gifPlayback: false
+                }, sendOptions);
+            }
+        } else {
+            await sock.sendMessage('status@broadcast', { 
+                text: message,
+                backgroundColor: '#075E54',
+                font: 1
+            }, sendOptions);
+        }
+        
+        console.log(`[WA BOT] WhatsApp Status posted successfully to status@broadcast`);
+        return res.json({ success: true });
+    } catch (error) {
+        console.error('[WA BOT] Failed to post status:', error);
         return res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -1201,7 +1345,11 @@ async function startRegistrationFlow(jid, m) {
         const botNumber = connectionUser || '';
         const botLink = botNumber ? `https://wa.me/${botNumber}?text=daftar` : 'chat pribadi';
         await sock.sendMessage(jid, { 
-            text: `⚠️ *Pendaftaran Mandiri harus dilakukan melalui Chat Pribadi (PC).*\n\nSilakan kirim pesan ke chat pribadi bot ini atau klik tautan berikut untuk memulai pendaftaran:\n👉 ${botLink}` 
+            text: `*⚠️ PEMBERITAHUAN PENDAFTARAN*\n` +
+                  `──────────────────────\n` +
+                  `Pendaftaran Mandiri harus dilakukan melalui *Chat Pribadi (PC)*.\n\n` +
+                  `Silakan kirim pesan ke chat pribadi bot ini atau klik tautan berikut untuk memulai pendaftaran:\n` +
+                  `👉 *${botLink}*`
         });
         return;
     }
@@ -1226,9 +1374,16 @@ async function startRegistrationFlow(jid, m) {
         
         if (!querySnapshot.empty) {
             const alumniDoc = querySnapshot.docs[0].data();
-            const statusLabel = alumniDoc.status === 'approved' ? 'Disetujui / Aktif' : 'Menunggu Peninjauan';
+            const statusLabel = alumniDoc.status === 'approved' ? '🟢 Disetujui / Aktif' : '🟡 Menunggu Peninjauan';
             await sock.sendMessage(jid, { 
-                text: `⚠️ *Nomor Anda Sudah Terdaftar*\n\nData Anda sudah tercatat di sistem reuni:\n👤 *Nama:* ${alumniDoc.nama}\n🎓 *Angkatan:* Lulus Tahun ${alumniDoc.angkatan}\n📌 *Status Pendaftaran:* ${statusLabel}\n\nKetik *!status* untuk informasi status pembayaran atau kehadiran Anda.` 
+                text: `*⚠️ NOMOR SUDAH TERDAFTAR*\n` +
+                      `──────────────────────\n` +
+                      `Nomor WhatsApp Anda sudah tercatat di database alumni:\n\n` +
+                      `👤 *Nama*      : ${alumniDoc.nama}\n` +
+                      `🎓 *Angkatan*  : Lulus Tahun ${alumniDoc.angkatan}\n` +
+                      `🏫 *Lembaga*   : ${alumniDoc.lembaga || '-'}\n` +
+                      `📌 *Status*    : ${statusLabel}\n\n` +
+                      `Ketik *!status* untuk mengecek rincian status pembayaran iuran atau kehadiran Anda.` 
             });
             return;
         }
@@ -1243,11 +1398,10 @@ async function startRegistrationFlow(jid, m) {
         });
 
         await sock.sendMessage(jid, {
-            text: `*╭────────────────────────╮*\n` +
-                  `*   👋 DAFTAR REUNI AL-FATAH   *\n` +
-                  `*╰────────────────────────╯*\n\n` +
-                  `Saya akan memandu Anda untuk mendaftar secara otomatis langsung dari WhatsApp.\n\n` +
-                  `👉 *Langkah 1 dari 4*\n` +
+            text: `*✨ PENDAFTARAN REUNI AKBAR ✨*\n` +
+                  `──────────────────────\n` +
+                  `Selamat Datang di Pendaftaran Reuni Akbar Ponpes AL-FATAH. Saya akan memandu Anda melakukan pendaftaran secara mandiri.\n\n` +
+                  `*👉 Langkah 1 dari 4*\n` +
                   `Silakan ketik *Nama Lengkap* Anda:`
         });
     } catch (err) {
@@ -1280,13 +1434,14 @@ async function handleRegistrationFlow(jid, cleanMsg, m) {
             session.data.nama = capitalizeName(cleanMsg);
             session.step = 2;
             await sock.sendMessage(jid, {
-                text: `👤 *Nama:* ${session.data.nama}\n\n` +
-                      `👉 *Langkah 2 dari 4*\n` +
+                text: `👤 *Nama* : ${session.data.nama}\n` +
+                      `──────────────────────\n` +
+                      `*👉 Langkah 2 dari 4*\n` +
                       `Tahun berapa Anda lulus dari Ponpes AL-FATAH?\n` +
-                      `(Contoh ketik: *2012* atau *2015*):`
+                      `_(Contoh ketik: *2012* atau *2015*)_`
             });
             break;
- 
+
         case 2: // Angkatan (Tahun Lulus)
             const angkatanNum = parseInt(cleanMsg.replace(/\D/g, ''), 10);
             if (isNaN(angkatanNum) || angkatanNum < 1970 || angkatanNum > 2030) {
@@ -1296,15 +1451,16 @@ async function handleRegistrationFlow(jid, cleanMsg, m) {
             session.data.angkatan = angkatanNum;
             session.step = 3;
             await sock.sendMessage(jid, {
-                text: `🎓 *Angkatan:* Lulus Tahun ${session.data.angkatan}\n\n` +
-                      `👉 *Langkah 3 dari 4*\n` +
+                text: `🎓 *Angkatan* : Lulus Tahun ${session.data.angkatan}\n` +
+                      `──────────────────────\n` +
+                      `*👉 Langkah 3 dari 4*\n` +
                       `Pilih Lembaga pendidikan terakhir Anda di Ponpes AL-FATAH:\n` +
-                      `1. *MA* (Madrasah Aliyah)\n` +
-                      `2. *MTs* (Madrasah Tsanawiyah)\n\n` +
-                      `(Silakan ketik angka *1*, *2*, atau tulis langsung *MA* / *MTs*):`
+                      `1️⃣ *MA* (Madrasah Aliyah)\n` +
+                      `2️⃣ *MTs* (Madrasah Tsanawiyah)\n\n` +
+                      `_(Silakan ketik angka *1*, *2*, atau tulis langsung *MA* / *MTs*)_`
             });
             break;
- 
+
         case 3: // Lembaga (MA / MTs)
             let chosenLembaga = '';
             if (cleanMsg === '1' || textUpper === 'MA') {
@@ -1312,27 +1468,28 @@ async function handleRegistrationFlow(jid, cleanMsg, m) {
             } else if (cleanMsg === '2' || textUpper === 'MTS') {
                 chosenLembaga = 'MTs';
             }
- 
+
             if (!chosenLembaga) {
                 await sock.sendMessage(jid, {
                     text: `⚠️ *Pilihan tidak valid.*\n\nSilakan pilih Lembaga pendidikan Anda:\n1. *MA* (Madrasah Aliyah)\n2. *MTs* (Madrasah Tsanawiyah)\n\n(Ketik angka *1*, *2*, atau tulis langsung *MA* / *MTs*):`
                 });
                 return;
             }
- 
+
             session.data.lembaga = chosenLembaga;
             session.step = 4;
             await sock.sendMessage(jid, {
-                text: `🏫 *Lembaga:* ${session.data.lembaga}\n\n` +
-                      `👉 *Langkah 4 dari 4*\n` +
-                      `Silakan ketik *Alamat Lengkap* Anda saat ini.\n\n` +
-                      `*⚠️ KETENTUAN:*\n` +
-                      `Alamat harus memuat detail *Dusun/Kampung/Blok*, *RT/RW*, serta *Desa*, *Kecamatan*, dan *Kabupaten*.\n\n` +
+                text: `🏫 *Lembaga* : ${session.data.lembaga}\n` +
+                      `──────────────────────\n` +
+                      `*👉 Langkah 4 dari 4*\n` +
+                      `Silakan ketik *Alamat Lengkap* Anda saat ini secara detail.\n\n` +
+                      `*⚠️ KETENTUAN PENULISAN:*\n` +
+                      `Wajib menyertakan detail dusun/kampung, RT/RW, serta Desa, Kecamatan, dan Kabupaten.\n\n` +
                       `*Contoh:*\n` +
                       `_Kp. Babakan RT 02/05 Desa Cadasmekar, Kec. Tegalwaru, Kab. Purwakarta, Jawa Barat_`
             });
             break;
- 
+
         case 4: // Alamat Lengkap & Ekstraksi Wilayah
             await sock.sendMessage(jid, { text: '🔄 _Sedang memproses dan mendeteksi wilayah alamat Anda, mohon tunggu..._' });
             
@@ -1344,7 +1501,7 @@ async function handleRegistrationFlow(jid, cleanMsg, m) {
                     await sock.sendMessage(jid, { text: `${validation.reason}\n\nSilakan tulis kembali alamat lengkap Anda dengan benar:` });
                     return;
                 }
- 
+
                 // Simpan hasil ekstraksi & alamat raw ke object data (field 'alamat' sesuai skema web)
                 session.data.alamat = cleanMsg;
                 session.data.provinsi = capitalizeName(extracted.provinsi);
@@ -1355,27 +1512,26 @@ async function handleRegistrationFlow(jid, cleanMsg, m) {
                 session.step = 5;
                 
                 // Tampilkan Ringkasan & Konfirmasi
-                const summary = `*╭────────────────────────╮*\n` +
-                                `*   📝 RINGKASAN PENDAFTARAN   *\n` +
-                                `*╰────────────────────────╯*\n\n` +
-                                `Silakan periksa kembali data Anda:\n` +
+                const summary = `*📝 RINGKASAN PENDAFTARAN REUNI*\n` +
+                                `──────────────────────\n` +
+                                `Silakan periksa kembali data pendaftaran Anda:\n\n` +
                                 `👤 *Nama*      : ${session.data.nama}\n` +
                                 `🎓 *Angkatan*  : Lulus Tahun ${session.data.angkatan}\n` +
                                 `🏫 *Lembaga*   : ${session.data.lembaga}\n` +
-                                `📞 *No. WA*    : +${session.data.nowa}\n` +
+                                `📞 *WhatsApp*  : +${session.data.nowa}\n` +
                                 `📍 *Alamat*    : ${session.data.alamat}\n` +
-                                `🗺️ *Wilayah*    : Desa ${session.data.desa}, Kec. ${session.data.kecamatan}, Kab. ${session.data.kabupaten}, Prov. ${session.data.provinsi}\n\n` +
+                                `🗺️ *Wilayah*   : Desa ${session.data.desa}, Kec. ${session.data.kecamatan}, Kab. ${session.data.kabupaten}, Prov. ${session.data.provinsi}\n\n` +
                                 `Apakah data di atas sudah benar?\n` +
-                                `👉 Ketik *YA* jika sudah benar dan ingin menyimpan.\n` +
-                                `👉 Ketik *BATAL* untuk membatalkan pendaftaran.`;
+                                `👉 Ketik *YA* jika benar dan ingin menyimpan.\n` +
+                                `👉 Ketik *BATAL* untuk membatalkan.`;
                 await sock.sendMessage(jid, { text: summary });
             } catch (err) {
                 console.error('[WA BOT] Gagal memproses alamat:', err);
                 await sock.sendMessage(jid, { text: '⚠️ Terjadi kesalahan teknis saat mendeteksi alamat Anda. Silakan ketik kembali alamat lengkap Anda:' });
             }
             break;
- 
-        case 5: // Konfirmasi Adir
+
+        case 5: // Konfirmasi Akhir
             if (textUpper === 'YA') {
                 try {
                     const alumniCol = collection(db, 'alumni');
@@ -1389,14 +1545,13 @@ async function handleRegistrationFlow(jid, cleanMsg, m) {
                     }
                     
                     await sock.sendMessage(jid, {
-                        text: `*╭────────────────────────╮*\n` +
-                              `*   🎉 PENDAFTARAN BERHASIL!   *\n` +
-                              `*╰────────────────────────╯*\n\n` +
-                              `Alhamdulillah, data Anda telah disimpan di sistem dengan status *Menunggu Peninjauan*.\n\n` +
-                              `*Langkah Selanjutnya:*\n` +
-                              `Silakan lakukan pembayaran kontribusi iuran reuni melalui menu *keuangan* atau ketik *!iuran* untuk melihat rekening bank / QRIS panitia.\n\n` +
-                              `Ketik *!status* untuk mengecek status pendaftaran Anda secara berkala.\n\n` +
-                              `Terima kasih atas partisipasinya!`
+                        text: `*🎉 PENDAFTARAN BERHASIL! 🎉*\n` +
+                              `──────────────────────\n` +
+                              `Alhamdulillah, data pendaftaran Anda telah berhasil disimpan di sistem.\n\n` +
+                              `📌 *Status Akun:* Menunggu Peninjauan Admin\n\n` +
+                              `*👉 Langkah Selanjutnya:*\n` +
+                              `Silakan lakukan pembayaran iuran/donasi kontribusi reuni. Ketik *!iuran* untuk melihat rekening bank / QRIS resmi panitia.\n\n` +
+                              `Ketik *!status* untuk mengecek status pendaftaran & iuran secara berkala.`
                     });
                     
                     regSessions.delete(jid);
@@ -1472,13 +1627,12 @@ async function handleSaldoCommand(jid) {
         });
         
         const saldo = inC - outC;
-        const msg = `*╭────────────────────────╮*\n` +
-                    `*   📊 SALDO KAS REUNI AL-FATAH  *\n` +
-                    `*╰────────────────────────╯*\n\n` +
+        const msg = `*📊 SALDO KAS REUNI AL-FATAH*\n` +
+                    `──────────────────────\n` +
                     `• *Total Pemasukan*   : ${formatRupiah(inC)}\n` +
                     `• *Total Pengeluaran* : ${formatRupiah(outC)}\n` +
                     `• *Saldo Kas Riil*    : *${formatRupiah(saldo)}*\n\n` +
-                    `_Data di-update secara real-time dari Ledger Keuangan Portal._`;
+                    `_Data disinkronkan secara real-time dari sistem keuangan web._`;
                     
         await sock.sendMessage(jid, { text: msg });
     } catch (err) {
@@ -1528,24 +1682,23 @@ async function handleLaporanCommand(jid) {
             const dateStr = String(t.tanggal).split(',')[0] || '-';
             const tipe = t.status === 'pengeluaran' ? '🔴 Keluar' : '🟢 Masuk';
             const sign = t.status === 'pengeluaran' ? '-' : '+';
-            transMsg += `${idx + 1}. *[${dateStr}]* ${t.keterangan}\n` +
-                        `   _${t.kategori}_ | *${tipe}*: ${sign}${formatRupiah(t.nominal)}\n\n`;
+            transMsg += `🔹 *${idx + 1}. [${dateStr}]* ${t.keterangan}\n` +
+                        `   _${t.kategori}_ | *${tipe}* ${sign}${formatRupiah(t.nominal)}\n\n`;
         });
         
-        const msg = `*╭────────────────────────╮*\n` +
-                    `*  📄 LAPORAN KEUANGAN AL-FATAH  *\n` +
-                    `*╰────────────────────────╯*\n\n` +
-                    `*RINGKASAN DANA:*\n` +
-                    `• Realisasi Pemasukan    : ${formatRupiah(inC)}\n` +
-                    `• Realisasi Pengeluaran  : ${formatRupiah(outC)}\n` +
-                    `• Saldo Kas Riil Saat Ini: *${formatRupiah(saldo)}*\n\n` +
-                    `*5 TRANSAKSI TERAKHIR:*\n` +
-                    `----------------------------------------\n` +
+        const msg = `*📄 LAPORAN RINGKAS KEUANGAN*\n` +
+                    `──────────────────────\n` +
+                    `*💰 RINGKASAN KAS:*\n` +
+                    `• *Total Pemasukan*   : ${formatRupiah(inC)}\n` +
+                    `• *Total Pengeluaran* : ${formatRupiah(outC)}\n` +
+                    `• *Saldo Kas Saat Ini*: *${formatRupiah(saldo)}*\n\n` +
+                    `*📝 5 TRANSAKSI TERAKHIR:*\n` +
+                    `──────────────────────\n` +
                     (transMsg || '_Belum ada transaksi recorded._\n\n') +
-                    `----------------------------------------\n` +
-                    `Untuk melihat laporan resmi PDF/PNG lengkap silakan kunjungi:\n` +
+                    `──────────────────────\n` +
+                    `Untuk detail selengkapnya silakan kunjungi website:\n` +
                     `👉 https://phajar.github.io/Reuni/keuangan.html\n\n` +
-                    `_Pesan otomatis dikirim oleh Bot Portal Alumni PP Al-Fatah_`;
+                    `_Sistem Bot Reuni PP Al-Fatah_`;
                     
         let hasImage = false;
         try {
@@ -1659,14 +1812,13 @@ async function handleIuranCommand(jid) {
                 accountsText = `💳 *BANK MANDIRI*\n• No. Rekening: *1360012345678*\n• Atas Nama: *Bendahara Reuni Al-Fatah*\n\n`;
             }
             
-            iuranMsg = `*╭────────────────────────╮*\n` +
-                       `*    💳 INFO METODE PEMBAYARAN   *\n` +
-                       `*╰────────────────────────╯*\n\n` +
-                       `Halo Rekan Alumni/Panitia, berikut adalah metode pembayaran resmi yang terdaftar di sistem kami:\n\n` +
+            iuranMsg = `*✨ METODE PEMBAYARAN REUNI ✨*\n` +
+                       `──────────────────────\n` +
+                       `Halo Rekan Alumni/Panitia, silakan melakukan transfer/pembayaran melalui salah satu rekening resmi terdaftar:\n\n` +
                        accountsText +
-                       `Setelah melakukan transfer/scan, mohon konfirmasi & unggah bukti transfer Anda melalui link resmi berikut:\n` +
+                       `Setelah melakukan pembayaran, mohon konfirmasi bukti transfer dengan ketik *!konfirmasi [nominal] [nomor_wa_alumni_opsional]* (sambil melampirkan foto bukti transfer) atau melalui tautan:\n` +
                        `👉 https://phajar.github.io/Reuni/pembayaran.html\n\n` +
-                       `Terima kasih atas partisipasi dan dukungan Anda!`;
+                       `Terima kasih atas partisipasi Anda!`;
         } else {
             // If custom iuran_info is set, we still try to attach QRIS if it exists in payment_accounts
             try {
@@ -1771,14 +1923,60 @@ async function handleKonfirmasiCommand(jid, m, msgText) {
         const cleanPhone = normalizeWA(senderNumber);
         const isLid = senderJid.endsWith('@lid');
         
+        // Parse nominal and target phone number (if any)
+        let nominal = 0;
+        let targetPhoneRaw = '';
+        const cleanMsg = msgText.trim();
+        const commandPart = cleanMsg.split(/\s+/)[0];
+        const contentPart = cleanMsg.substring(commandPart.length).trim();
+        if (contentPart) {
+            const parts = contentPart.split(/\s+/);
+            const nominalWord = parts[0];
+            const rawNominal = nominalWord.replace(/\D/g, '');
+            nominal = Number(rawNominal);
+            
+            if (parts.length > 1) {
+                let p1 = parts[1].split('/')[0].trim();
+                const targetDigits = p1.replace(/\D/g, '');
+                if (targetDigits.length >= 9 && targetDigits.length <= 15) {
+                    targetPhoneRaw = p1;
+                }
+            }
+        }
+        
+        if (!nominal || isNaN(nominal) || nominal <= 0) {
+            const msgInvalidNominal = `*⚠️ FORMAT KONFIRMASI SALAH*\n` +
+                                      `──────────────────────\n` +
+                                      `Silakan gunakan format berikut:\n` +
+                                      `👉 *!konfirmasi [nominal] [nomor_wa_alumni_opsional]* sambil melampirkan foto struk/bukti transfer.\n\n` +
+                                      `*Contoh Konfirmasi Sendiri:* \n` +
+                                      `Kirim foto bukti transfer dengan caption: \n` +
+                                      `*!konfirmasi 100000*\n\n` +
+                                      `*Contoh Konfirmasi Orang Lain:* \n` +
+                                      `Kirim foto bukti transfer dengan caption: \n` +
+                                      `*!konfirmasi 100000 082130445019*`;
+            await sock.sendMessage(jid, { text: msgInvalidNominal });
+            return;
+        }
+        
+        // Determine lookup phone
+        let lookupPhone = '';
+        let isUsingTargetPhone = false;
+        if (targetPhoneRaw) {
+            lookupPhone = normalizeWA(targetPhoneRaw);
+            isUsingTargetPhone = true;
+        } else {
+            lookupPhone = cleanPhone;
+        }
+        
         let snapEmpty = true;
         let snap = null;
         
-        if (!isLid) {
+        if (lookupPhone) {
             const phoneFormats = [
-                cleanPhone,
-                '0' + cleanPhone.slice(2),
-                cleanPhone.slice(2)
+                lookupPhone,
+                '0' + lookupPhone.slice(2),
+                lookupPhone.slice(2)
             ];
             
             const alumniCol = collection(db, 'alumni');
@@ -1788,13 +1986,47 @@ async function handleKonfirmasiCommand(jid, m, msgText) {
         }
         
         if (snapEmpty) {
-            const displayPhone = isLid ? '' : ` (*+${cleanPhone}*)`;
-            const msgNotRegistered = `*⚠️ NOMOR ANDA BELUM TERDAFTAR ⚠️*\n\n` +
-                                     `Mohon maaf, nomor WhatsApp Anda${displayPhone} belum terdaftar di database alumni kami.\n\n` +
-                                     `Silakan lakukan pendaftaran terlebih dahulu melalui link formulir pendaftaran resmi berikut:\n` +
-                                     `👉 https://phajar.github.io/Reuni/pendaftaran.html\n\n` +
-                                     `Setelah mendaftar dan disetujui oleh admin, Anda dapat melakukan konfirmasi donasi kembali. Terima kasih!`;
-            await sock.sendMessage(jid, { text: msgNotRegistered });
+            if (isUsingTargetPhone) {
+                let sentInvitation = false;
+                try {
+                    const targetJid = `${lookupPhone}@s.whatsapp.net`;
+                    const msgInviteToTarget = `*📢 PENDAFTARAN ALUMNI REUNI AKBAR PP AL-FATAH*\n` +
+                                              `──────────────────────\n` +
+                                              `Assalamu'alaikum Wr. Wb.\n\n` +
+                                              `Halo Rekan Alumni, nomor WhatsApp Anda baru saja dicantumkan oleh seseorang untuk konfirmasi donasi reuni.\n\n` +
+                                              `Namun, nomor WhatsApp Anda belum terdaftar di database alumni kami.\n\n` +
+                                              `Mohon kesediaannya untuk mendaftarkan diri terlebih dahulu melalui link formulir pendaftaran resmi berikut:\n` +
+                                              `👉 https://phajar.github.io/Reuni/pendaftaran.html\n\n` +
+                                              `Setelah data Anda diverifikasi dan disetujui oleh admin, donasi tersebut dapat kami proses. Terima kasih banyak atas dukungannya!\n\n` +
+                                              `Wassalamu'alaikum Wr. Wb.`;
+                    
+                    await sock.sendMessage(targetJid, { text: msgInviteToTarget });
+                    sentInvitation = true;
+                } catch (inviteErr) {
+                    console.error('[WA BOT] Gagal mengirim undangan daftar ke nomor tujuan:', inviteErr);
+                }
+
+                const msgNotRegistered = `*⚠️ NOMOR TUJUAN BELUM TERDAFTAR*\n` +
+                                         `──────────────────────\n` +
+                                         `Mohon maaf, nomor WhatsApp tujuan (*+${lookupPhone}*) belum terdaftar di database alumni kami.\n\n` +
+                                         (sentInvitation 
+                                             ? `Kami telah mengirimkan undangan pendaftaran secara otomatis ke nomor tersebut (*+${lookupPhone}*) agar alumni yang bersangkutan dapat segera mendaftar.\n\n`
+                                             : `Gagal mengirimkan undangan otomatis ke nomor tersebut. Silakan minta alumni yang bersangkutan untuk mendaftar mandiri terlebih dahulu.\n\n`
+                                         ) +
+                                         `Silakan lakukan konfirmasi kembali setelah alumni tersebut terdaftar. Terima kasih!`;
+                await sock.sendMessage(jid, { text: msgNotRegistered });
+            } else {
+                const displayPhone = isLid ? '' : ` (*+${cleanPhone}*)`;
+                const msgNotRegistered = `*⚠️ NOMOR ANDA BELUM TERDAFTAR*\n` +
+                                         `──────────────────────\n` +
+                                         `Mohon maaf, nomor WhatsApp Anda${displayPhone} belum terdaftar di database alumni kami.\n\n` +
+                                         `Silakan lakukan pendaftaran terlebih dahulu melalui link formulir pendaftaran resmi berikut:\n` +
+                                         `👉 https://phajar.github.io/Reuni/pendaftaran.html\n\n` +
+                                         `Atau jika Anda ingin mengonfirmasi donasi untuk alumni lain yang sudah terdaftar, gunakan format:\n` +
+                                         `👉 *!konfirmasi [nominal] [nomor_wa_alumni]*\n\n` +
+                                         `Setelah mendaftar dan disetujui oleh admin, Anda dapat melakukan konfirmasi donasi kembali. Terima kasih!`;
+                await sock.sendMessage(jid, { text: msgNotRegistered });
+            }
             return;
         }
         
@@ -1813,26 +2045,6 @@ async function handleKonfirmasiCommand(jid, m, msgText) {
             alumnusData = alumnusDoc.data();
         }
         
-        let nominal = 0;
-        const cleanMsg = msgText.trim();
-        const commandPart = cleanMsg.split(/\s+/)[0];
-        const contentPart = cleanMsg.substring(commandPart.length).trim();
-        if (contentPart) {
-            const rawNominal = contentPart.replace(/\D/g, '');
-            nominal = Number(rawNominal);
-        }
-        
-        if (!nominal || isNaN(nominal) || nominal <= 0) {
-            const msgInvalidNominal = `*Format Konfirmasi Donasi salah.*\n\n` +
-                                      `Silakan gunakan format berikut:\n` +
-                                      `👉 *!konfirmasi [nominal]* sambil melampirkan foto struk/bukti transfer.\n\n` +
-                                      `*Contoh:* \n` +
-                                      `Kirim foto bukti transfer dengan caption: \n` +
-                                      `*!konfirmasi 100000*`;
-            await sock.sendMessage(jid, { text: msgInvalidNominal });
-            return;
-        }
-        
         let buktiUrl = '';
         const messageType = Object.keys(m.message)[0];
         let imageMsg = null;
@@ -1843,12 +2055,14 @@ async function handleKonfirmasiCommand(jid, m, msgText) {
         }
         
         if (!imageMsg) {
-            const msgNoReceipt = `*⚠️ FOTO BUKTI TRANSFER WAJIB DILAMPIRKAN ⚠️*\n\n` +
-                                 `Mohon maaf *${alumnusData.nama}*, konfirmasi donasi Anda tidak dapat kami proses karena Anda tidak melampirkan foto bukti transfer.\n\n` +
+            const examplePhone = isUsingTargetPhone ? ` ${targetPhoneRaw}` : '';
+            const msgNoReceipt = `*⚠️ BUKTI TRANSFER WAJIB DILAMPIRKAN*\n` +
+                                 `──────────────────────\n` +
+                                 `Mohon maaf, konfirmasi donasi untuk *${alumnusData.nama}* tidak dapat kami proses karena Anda tidak melampirkan foto bukti transfer.\n\n` +
                                  `Silakan lakukan konfirmasi ulang dengan cara mengirimkan/melampirkan foto struk/bukti transfer Anda dan menuliskan caption:\n` +
-                                 `👉 *!konfirmasi [nominal]*\n\n` +
+                                 `👉 *!konfirmasi [nominal] [nomor_wa_alumni_opsional]*\n\n` +
                                  `*Contoh caption:* \n` +
-                                 `*!konfirmasi 100000*`;
+                                 `*!konfirmasi ${nominal || 100000}${examplePhone}*`;
             await sock.sendMessage(jid, { text: msgNoReceipt });
             return;
         }
@@ -1874,7 +2088,7 @@ async function handleKonfirmasiCommand(jid, m, msgText) {
                 } catch (sharpErr) {
                     console.warn('[WA BOT] Gagal mengompresi bukti transfer dengan sharp, menggunakan file asli:', sharpErr.message);
                 }
-
+                
                 console.log(`[WA BOT] Mengunggah bukti transfer sebesar ${buffer.length} bytes ke Cloudinary...`);
                 const uploadRes = await uploadBufferToCloudinary(buffer);
                 if (uploadRes) {
@@ -1926,17 +2140,18 @@ async function handleKonfirmasiCommand(jid, m, msgText) {
         }
         
         if (approvalGroupJid && approvalGroupJid.endsWith('@g.us')) {
-            const captionText = `*📢 KONFIRMASI DONASI BARU MASUK 📢*\n\n` +
-                                `Telah diterima konfirmasi donasi dari alumnus berikut:\n\n` +
-                                `• *Nama Pembayar* : ${alumnusData.nama}\n` +
-                                `• *Angkatan*      : ${alumnusData.angkatan || '-'}\n` +
-                                `• *Lembaga*       : ${alumnusData.lembaga || '-'}\n` +
-                                `• *Nominal*       : *${formatRupiah(nominal)}*\n` +
-                                `• *Tanggal*       : ${transactionData.tanggal}\n\n` +
-                                `*ID Transaksi:* \`${docRef.id}\`\n\n` +
-                                `----------------------------------------\n` +
-                                `Reply pesan ini dengan *!setuju* atau *!approve* untuk memverifikasi donasi.\n` +
-                                `Atau kirim pesan: *!setuju ${docRef.id}*`;
+            const captionText = `*📢 KONFIRMASI DONASI BARU MASUK*\n` +
+                                `──────────────────────\n` +
+                                `Telah diterima konfirmasi donasi dari alumnus:\n\n` +
+                                `👤 *Nama Pembayar* : ${alumnusData.nama}\n` +
+                                `🎓 *Angkatan*      : ${alumnusData.angkatan || '-'}\n` +
+                                `🏫 *Lembaga*       : ${alumnusData.lembaga || '-'}\n` +
+                                `💰 *Nominal*       : *${formatRupiah(nominal)}*\n` +
+                                `📅 *Tanggal*       : ${transactionData.tanggal}\n\n` +
+                                `*ID Transaksi:* \`${docRef.id}\`\n` +
+                                `──────────────────────\n` +
+                                `• Reply pesan ini dengan *!setuju* atau *!approve* untuk memverifikasi donasi.\n` +
+                                `• Atau ketik: *!setuju ${docRef.id}*`;
             
             try {
                 if (buktiUrl) {
@@ -1953,12 +2168,12 @@ async function handleKonfirmasiCommand(jid, m, msgText) {
             }
         }
         
-        const msgSuccess = `*✅ KONFIRMASI DONASI BERHASIL 📄*\n\n` +
-                           `Halo *${alumnusData.nama}* (Tahun Lulus ${alumnusData.angkatan}),\n` +
-                           `Konfirmasi donasi Anda sebesar *${formatRupiah(nominal)}* telah kami terima di sistem.\n\n` +
-                           `• Status: *Menunggu Verifikasi Bendahara*\n` +
-                           `• Bukti Transfer: ${buktiUrl ? 'Terunggah 🟢' : 'Tidak Ada / Kosong ⚠️'}\n\n` +
-                           `Mohon tunggu proses verifikasi oleh Bendahara. Anda dapat memantau status secara berkala melalui link berikut:\n` +
+        const msgSuccess = `*✅ KONFIRMASI DONASI BERHASIL*\n` +
+                           `──────────────────────\n` +
+                           `Konfirmasi donasi untuk *${alumnusData.nama}* (Tahun Lulus ${alumnusData.angkatan}) sebesar *${formatRupiah(nominal)}* telah kami terima di sistem.\n\n` +
+                           `• *Status* : Menunggu Verifikasi Bendahara ⏳\n` +
+                           `• *Bukti Transfer* : ${buktiUrl ? 'Terunggah 🟢' : 'Tidak Ada / Kosong ⚠️'}\n\n` +
+                           `Mohon tunggu proses verifikasi oleh Bendahara. Status donasi dapat dipantau secara berkala melalui link berikut:\n` +
                            `👉 https://phajar.github.io/Reuni/cek-status.html\n\n` +
                            `Jazakumullahu khairan katsiran atas partisipasi Anda! 🙏`;
         await sock.sendMessage(jid, { text: msgSuccess });
@@ -2087,48 +2302,15 @@ async function handleApproveCommand(jid, m, msgText) {
         }
         
         // Send success message to group
-        const approvalMsg = `*✅ DONASI DISETUJUI VIA WHATSAPP ✅*\n\n` +
+        const approvalMsg = `*✅ DONASI DISETUJUI VIA WHATSAPP*\n` +
+                            `──────────────────────\n` +
                             `Donasi dari *${txData.nama_pembayar}* sebesar *${formatRupiah(txData.nominal)}* telah diverifikasi dan disetujui oleh admin *+${senderNumber}*.\n\n` +
                             `Status di sistem telah diperbarui menjadi *Lunas / Berhasil*.\n` +
                             `Kuitansi digital otomatis dikirimkan ke donatur.`;
         await sock.sendMessage(jid, { text: approvalMsg });
         
-        // Send auto-receipt to the alumnus/donor
-        if (txData.ref_alumni_id) {
-            const alumnusRef = doc(db, 'alumni', txData.ref_alumni_id);
-            const alumnusSnap = await getDoc(alumnusRef);
-            if (alumnusSnap.exists()) {
-                const alumnusData = alumnusSnap.data();
-                if (alumnusData.nowa) {
-                    // Normalize phone number to send JID
-                    let rawWa = alumnusData.nowa.replace(/\D/g, '');
-                    if (rawWa.startsWith('0')) {
-                        rawWa = '62' + rawWa.slice(1);
-                    } else if (rawWa.startsWith('8')) {
-                        rawWa = '62' + rawWa;
-                    }
-                    const donorJid = rawWa + '@s.whatsapp.net';
-                    const formattedNominal = formatRupiah(txData.nominal);
-                    const dateStr = txData.tanggal || new Date().toLocaleString("id-ID");
-                    
-                    const receiptMsg = `*BUKTI PEMBAYARAN REUNI AL-FATAH* ✨\n\n` +
-                                       `Halo *${alumnusData.nama}* (Angkatan ${alumnusData.angkatan || "-"}),\n\n` +
-                                       `Terima kasih, pembayaran donasi Anda sebesar *${formattedNominal}* telah berhasil diverifikasi dan dicatat oleh Bendahara Reuni Al-Fatah.\n\n` +
-                                       `*Rincian Transaksi:*\n` +
-                                       `- Kategori: *Donasi*\n` +
-                                       `- Jumlah: *${formattedNominal}*\n` +
-                                       `- Tanggal: *${dateStr}*\n` +
-                                       `- Status: *Lunas / Berhasil*\n\n` +
-                                       `Unduh kuitansi resmi Anda di sini:\n` +
-                                       `👉 https://phajar.github.io/Reuni/pembayaran.html?wa=${encodeURIComponent(alumnusData.nowa)}\n\n` +
-                                       `Semoga menjadi amal ibadah dan membawa keberkahan bagi kita semua. Sampai jumpa di hari H reuni! 🤝\n\n` +
-                                       `_Pesan ini dikirim otomatis oleh Sistem Reuni Al-Fatah._`;
-                                       
-                    await sock.sendMessage(donorJid, { text: receiptMsg });
-                    console.log(`[WA BOT] Auto-receipt sent to alumnus: ${alumnusData.nowa}`);
-                }
-            }
-        }
+        // Note: Auto-receipt generation & transmission is handled automatically by the Firestore listener 'initFinanceReceiptListener'
+        console.log(`[WA BOT] Handled approve command for transaction ${transactionId}. Firestore listener will send the receipt.`);
     } catch (err) {
         console.error('[WA BOT] Gagal memproses persetujuan via WA:', err);
         await sock.sendMessage(jid, { text: '❌ Terjadi kesalahan saat memproses persetujuan donasi.' });
@@ -2263,7 +2445,14 @@ async function triggerScheduledReport() {
     
     let template = currentBotConfig.report_template || '';
     if (!template.trim()) {
-        template = `Assalamu'alaikum wr. wb.\n\nBerikut kami lampirkan Laporan Keuangan Reuni Akbar AL-FATAH (Periode {bulan}).\n\nTotal Pemasukan: *{pemasukan}*\nTotal Pengeluaran: *{pengeluaran}*\nSaldo Kas Saat Ini: *{saldo}*\n\nTerima kasih atas transparansi dan dukungan semua pihak.`;
+        template = `*📢 LAPORAN KEUANGAN TERJADWAL*\n` +
+                   `──────────────────────\n` +
+                   `Assalamu'alaikum wr. wb.\n\n` +
+                   `Berikut kami lampirkan Laporan Keuangan Reuni Akbar AL-FATAH (Periode *{bulan}*):\n\n` +
+                   `• *Total Pemasukan*   : {pemasukan}\n` +
+                   `• *Total Pengeluaran* : {pengeluaran}\n` +
+                   `• *Saldo Kas Saat Ini*: *{saldo}*\n\n` +
+                   `Terima kasih atas transparansi dan dukungan semua pihak.`;
     }
     
     let messageText = template
@@ -2273,15 +2462,15 @@ async function triggerScheduledReport() {
         .replace(/{saldo}/g, formatRupiah(saldo));
         
     const latestTrans = listData.slice(-5).reverse();
-    let transMsg = '\n\n*5 TRANSAKSI TERAKHIR:*\n----------------------------------------\n';
+    let transMsg = '\n\n*📝 5 TRANSAKSI TERAKHIR:*\n──────────────────────\n';
     latestTrans.forEach((t, idx) => {
         const dateStr = String(t.tanggal).split(',')[0] || '-';
         const tipe = t.status === 'pengeluaran' ? '🔴 Keluar' : '🟢 Masuk';
         const sign = t.status === 'pengeluaran' ? '-' : '+';
-        transMsg += `${idx + 1}. *[${dateStr}]* ${t.keterangan}\n` +
-                    `   _${t.kategori}_ | *${tipe}*: ${sign}${formatRupiah(t.nominal)}\n`;
+        transMsg += `🔹 *${idx + 1}. [${dateStr}]* ${t.keterangan}\n` +
+                    `   _${t.kategori}_ | *${tipe}*: ${sign}${formatRupiah(t.nominal)}\n\n`;
     });
-    transMsg += '----------------------------------------\n';
+    transMsg += '──────────────────────\n';
     transMsg += `Unduh Laporan Lengkap PDF/PNG:\n👉 https://phajar.github.io/Reuni/keuangan.html\n\n`;
     transMsg += `_Laporan otomatis terjadwal dikirim oleh Bot Reuni Al-Fatah._`;
     
@@ -2325,18 +2514,19 @@ function initAlumniRegistrationListener(db) {
                     
                     const groupJid = currentBotConfig.group_pendataan_jid || currentBotConfig.approval_group_jid;
                     if (groupJid && groupJid.endsWith('@g.us')) {
-                        const message = `*📢 PENDAFTARAN ALUMNI BARU 📢*\n\n` +
+                        const message = `*📢 PENDAFTARAN ALUMNI BARU*\n` +
+                                        `──────────────────────\n` +
                                         `Telah terdaftar alumni baru yang memerlukan persetujuan:\n\n` +
-                                        `• *Nama Lengkap* : ${data.nama}\n` +
-                                        `• *Angkatan*     : ${data.angkatan || '-'}\n` +
-                                        `• *Lembaga*      : ${data.lembaga || '-'}\n` +
-                                        `• *No. WhatsApp* : +${data.nowa || '-'}\n` +
-                                        `• *Alamat*       : ${data.alamat || '-'}\n` +
-                                        `• *Wilayah*      : ${data.desa || '-'}, ${data.kecamatan || '-'}, ${data.kabupaten || '-'}, ${data.provinsi || '-'}\n\n` +
-                                        `*ID Alumni:* \`${alumniId}\`\n\n` +
-                                        `----------------------------------------\n` +
-                                        `Reply pesan ini dengan *!setuju-alumni* atau *!approve-alumni* untuk menyetujui pendaftaran.\n` +
-                                        `Atau kirim pesan: *!setuju-alumni ${alumniId}*`;
+                                        `👤 *Nama Lengkap* : ${data.nama}\n` +
+                                        `🎓 *Angkatan*     : Lulus Tahun ${data.angkatan || '-'}\n` +
+                                        `🏫 *Lembaga*      : ${data.lembaga || '-'}\n` +
+                                        `📞 *No. WhatsApp* : +${data.nowa || '-'}\n` +
+                                        `📍 *Alamat*       : ${data.alamat || '-'}\n` +
+                                        `🗺️ *Wilayah*      : Desa ${data.desa || '-'}, Kec. ${data.kecamatan || '-'}, Kab. ${data.kabupaten || '-'}, Prov. ${data.provinsi || '-'}\n\n` +
+                                        `*ID Alumni:* \`${alumniId}\`\n` +
+                                        `──────────────────────\n` +
+                                        `• Reply pesan ini dengan *!setuju-alumni* atau *!approve-alumni* untuk menyetujui pendaftaran.\n` +
+                                        `• Atau ketik: *!setuju-alumni ${alumniId}*`;
                          
                         try {
                             if (sock && connectionStatus === 'open') {
@@ -2374,12 +2564,13 @@ function initAuditLogListener(db) {
                     const groupJid = currentBotConfig.group_log_jid || currentBotConfig.approval_group_jid;
                     if (groupJid && groupJid.endsWith('@g.us')) {
                         const dateStr = new Date(data.timestamp).toLocaleString('id-ID');
-                        const message = `*🛡️ AUDIT LOG: AKTIVITAS OPERATOR 🛡️*\n\n` +
-                                        `• *Nama Operator* : ${data.operator_name}\n` +
-                                        `• *Email*         : ${data.operator_email}\n` +
-                                        `• *Aksi*          : ${data.action}\n` +
-                                        `• *Detail*        : ${data.details}\n` +
-                                        `• *Waktu*         : ${dateStr}`;
+                        const message = `*🛡️ AUDIT LOG: AKTIVITAS OPERATOR*\n` +
+                                        `──────────────────────\n` +
+                                        `👤 *Nama Operator* : ${data.operator_name}\n` +
+                                        `✉️ *Email*         : ${data.operator_email}\n` +
+                                        `🎬 *Aksi*          : ${data.action}\n` +
+                                        `📝 *Detail*        : ${data.details}\n` +
+                                        `📅 *Waktu*         : ${dateStr}`;
                         
                         try {
                             if (sock && connectionStatus === 'open') {
@@ -2486,7 +2677,8 @@ async function handleApproveAlumniCommand(jid, m, msgText) {
             console.error('[WA BOT] Gagal mengupdate sync_state:', syncErr);
         }
         
-        const approvalMsg = `*✅ PENDAFTARAN ALUMNI DISETUJUI VIA WHATSAPP ✅*\n\n` +
+        const approvalMsg = `*✅ PENDAFTARAN ALUMNI DISETUJUI*\n` +
+                            `──────────────────────\n` +
                             `Pendaftaran alumni *${alumniData.nama}* (Angkatan ${alumniData.angkatan || '-'}) telah disetujui oleh admin *+${senderNumber}*.\n\n` +
                             `Status alumni telah aktif di sistem dan welcome message telah dikirim ke yang bersangkutan.`;
         await sock.sendMessage(jid, { text: approvalMsg });
@@ -2500,12 +2692,14 @@ async function handleApproveAlumniCommand(jid, m, msgText) {
             }
             const alumnusJid = rawWa + '@s.whatsapp.net';
             
-            const welcomeMsg = `*SELAMAT DATANG DI PORTAL ALUMNI PP AL-FATAH* 🎉\n\n` +
-                               `Halo *${alumniData.nama}* (Angkatan ${alumniData.angkatan || '-'}),\n` +
+            const welcomeMsg = `*🎉 SELAMAT DATANG DI PORTAL ALUMNI PP AL-FATAH 🎉*\n` +
+                               `──────────────────────\n` +
+                               `Halo *${alumniData.nama}* (Angkatan ${alumniData.angkatan || '-'}),\n\n` +
                                `Pendaftaran Anda telah disetujui oleh admin. Selamat bergabung!\n\n` +
                                `Sekarang Kakak sudah terdaftar resmi di database Reuni Akbar Ponpes AL-FATAH. Kakak juga dapat berkontribusi/berdonasi untuk menyukseskan acara kita melalui menu keuangan atau tautan berikut:\n` +
                                `👉 https://phajar.github.io/Reuni/pembayaran.html?wa=${encodeURIComponent(alumniData.nowa)}\n\n` +
-                               `Terima kasih dan sampai jumpa di acara Reuni Akbar PP AL-FATAH! 🤝`;
+                               `Terima kasih dan sampai jumpa di acara Reuni Akbar PP AL-FATAH! 🤝\n\n` +
+                               `_Sistem Bot Reuni PP Al-Fatah_`;
                                
             await sock.sendMessage(alumnusJid, { text: welcomeMsg });
             console.log(`[WA BOT] Welcome message sent to alumnus: ${alumniData.nowa}`);
@@ -2581,7 +2775,12 @@ async function handleBackupDbCommand(jid, m) {
             document: fs.readFileSync(tempFilePath),
             mimetype: 'application/json',
             fileName: tempFilename,
-            caption: `📊 *BACKUP DATABASE REUNI PP AL-FATAH*\n\n• Waktu Backup: *${new Date().toLocaleString('id-ID')}*\n• Koleksi Berhasil Di-backup: *${collectionsList.join(', ')}*\n• Triggered by Admin: *+${senderNumber}*`
+            caption: `*📊 BACKUP DATABASE REUNI PP AL-FATAH*\n` +
+                     `──────────────────────\n` +
+                     `• *Waktu Backup* : ${new Date().toLocaleString('id-ID')}\n` +
+                     `• *Koleksi*      : ${collectionsList.join(', ')}\n` +
+                     `• *Operator*     : +${senderNumber}\n\n` +
+                     `_Sistem Bot Reuni PP Al-Fatah_`
         });
         
         console.log(`[BACKUP] Backup file sent successfully.`);
@@ -2610,28 +2809,28 @@ async function handleMenuCommand(jid, m) {
         const adminList = (currentBotConfig.approval_admins || '').split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean);
         const isAuthorized = adminList.includes(senderNumber);
         
-        let menuMsg = `*╭────────────────────────╮*\n` +
-                      `*   ✨ MENU UTAMA BOT REUNI ✨   *\n` +
-                      `*╰────────────────────────╯*\n\n` +
+        let menuMsg = `*✨ MENU UTAMA BOT REUNI ✨*\n` +
+                      `──────────────────────\n` +
                       `Halo! Berikut adalah daftar perintah valid yang dapat Anda gunakan pada bot ini:\n\n` +
                       `*🌐 PERINTAH ALUMNI*\n` +
-                      `┌  *daftar* : Mulai pendaftaran alumni mandiri\n` +
-                      `├  *!saldo* : Cek saldo kas riil saat ini\n` +
-                      `├  *!laporan* : Laporan keuangan & 5 transaksi terakhir\n` +
-                      `├  *!iuran* : Cara iuran & QRIS dinamis\n` +
-                      `├  *!konfirmasi [nominal]* : Lapor bukti transfer\n` +
-                      `├  *!status* : Cek status pendaftaran & iuran Anda\n` +
-                      `├  *!menu* : Tampilkan menu ringkas ini\n` +
-                      `└  *!help* : Bantuan detail & penjelasan perintah\n\n`;
+                      `🔹 *daftar* : Mulai pendaftaran alumni mandiri\n` +
+                      `🔹 *!saldo* : Cek saldo kas riil saat ini\n` +
+                      `🔹 *!laporan* : Laporan keuangan & 5 transaksi terakhir\n` +
+                      `🔹 *!iuran* : Cara iuran & QRIS dinamis\n` +
+                      `🔹 *!konfirmasi [nominal] [nomor_wa_tujuan]* : Lapor bukti transfer\n` +
+                      `🔹 *!status* : Cek status pendaftaran & iuran Anda\n` +
+                      `🔹 *!undangan* : Dapatkan link undangan digital personal\n` +
+                      `🔹 *!menu* : Tampilkan menu ringkas ini\n` +
+                      `🔹 *!help* : Bantuan detail & penjelasan perintah\n\n`;
                       
         if (isAuthorized) {
-            menuMsg += `*🛡️ PERINTAH KHUSUS ADMIN* (Terotorisasi)\n` +
-                       `┌  *!setuju [ID]* : Setujui transaksi donasi\n` +
-                       `├  *!setuju-alumni [ID]* : Setujui alumni baru\n` +
-                       `└  *!backup-db* : Unduh cadangan database JSON\n\n`;
+            menuMsg += `*🛡️ PERINTAH KHUSUS ADMIN*\n` +
+                       `🔸 *!setuju [ID]* : Setujui transaksi donasi\n` +
+                       `🔸 *!setuju-alumni [ID]* : Setujui alumni baru\n` +
+                       `🔸 *!backup-db* : Unduh cadangan database JSON\n\n`;
         }
         
-        menuMsg += `──────────────────────────\n` +
+        menuMsg += `──────────────────────\n` +
                    `Ketik *!help* untuk melihat panduan detail penggunaan setiap perintah.\n` +
                    `_Sistem Bot Reuni Akbar PP AL-FATAH_`;
         
@@ -2656,29 +2855,31 @@ async function handleHelpCommand(jid, m) {
         const adminList = (currentBotConfig.approval_admins || '').split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean);
         const isAuthorized = adminList.includes(senderNumber);
         
-        let helpMsg = `*╭────────────────────────╮*\n` +
-                      `*  ✨ PANDUAN PENGGUNAAN BOT ✨  *\n` +
-                      `*╰────────────────────────╯*\n\n` +
+        let helpMsg = `*✨ PANDUAN PENGGUNAAN BOT ✨*\n` +
+                      `──────────────────────\n` +
                       `Berikut adalah panduan lengkap dan contoh penggunaan untuk setiap perintah bot Reuni AL-FATAH:\n\n` +
                       `*🌐 UNTUK ALUMNI*\n\n` +
                       `📝 *daftar*\n` +
                       `Memulai proses pendaftaran mandiri alumni baru secara interaktif langsung melalui chat bot ini.\n\n` +
-                      `📝 *!saldo*\n` +
+                      `💰 *!saldo*\n` +
                       `Menampilkan total pemasukan, pengeluaran, dan saldo kas riil saat ini secara real-time.\n\n` +
                       `📊 *!laporan*\n` +
                       `Mengirimkan gambar infografis laporan keuangan formal resmi lengkap beserta rincian 5 transaksi kas terbaru.\n\n` +
                       `💳 *!iuran*\n` +
                       `Menampilkan informasi rekening bank panitia beserta gambar QRIS dinamis untuk pembayaran.\n\n` +
-                      `📩 *!konfirmasi [nominal]*\n` +
+                      `📩 *!konfirmasi [nominal] [nomor_wa_tujuan_opsional]*\n` +
                       `Melaporkan bukti transfer. Kirim/lampirkan foto struk transfer Anda dengan caption:\n` +
-                      `👉 Contoh: *!konfirmasi 150000*\n\n` +
+                      `👉 Contoh Sendiri: *!konfirmasi 150000*\n` +
+                      `👉 Contoh Orang Lain: *!konfirmasi 150000 082130445019*\n\n` +
                       `📊 *!status*\n` +
                       `Mengecek status akun pendaftaran, kehadiran, dan status/nominal pembayaran iuran donasi Anda.\n\n` +
+                      `✉️ *!undangan*\n` +
+                      `Mendapatkan link surat undangan digital resmi personal Anda.\n\n` +
                       `📋 *!menu*\n` +
                       `Menampilkan ringkasan seluruh daftar perintah valid.\n\n` +
                       `❓ *!help*\n` +
                       `Menampilkan halaman panduan bantuan ini.\n\n` +
-                      `──────────────────────────\n`;
+                      `──────────────────────\n`;
                       
         if (isAuthorized) {
             helpMsg += `*🛡️ UNTUK ADMIN TEROTORISASI*\n\n` +
@@ -2688,7 +2889,7 @@ async function handleHelpCommand(jid, m) {
                        `Menyetujui pendaftaran alumni baru. (Atau reply/balas pesan notifikasi alumni baru dari bot dengan mengetik *!setuju-alumni*).\n\n` +
                        `💾 *!backup-db*\n` +
                        `Mengunduh cadangan lengkap seluruh koleksi database dalam format JSON.\n\n` +
-                       `──────────────────────────\n`;
+                       `──────────────────────\n`;
         }
         
         helpMsg += `_Sistem Bot Reuni Akbar Pondok Pesantren AL-FATAH_`;
@@ -2742,7 +2943,8 @@ async function handleStatusCommand(jid, m) {
         const snap = await getDocs(q);
         
         if (snap.empty) {
-            const msgNotRegistered = `*⚠️ STATUS PENDAFTARAN ALUMNI ⚠️*\n\n` +
+            const msgNotRegistered = `*⚠️ STATUS PENDAFTARAN ALUMNI*\n` +
+                                     `──────────────────────\n` +
                                      `Nomor WhatsApp Anda (*+${cleanPhone}*) belum terdaftar di sistem reuni.\n\n` +
                                      `Silakan ketik *daftar* untuk mendaftar secara otomatis langsung dari WhatsApp, atau daftar melalui web portal:\n` +
                                      `👉 https://phajar.github.io/Reuni/pendaftaran.html`;
@@ -2782,23 +2984,90 @@ async function handleStatusCommand(jid, m) {
             paymentStatus = `🟡 Menunggu Persetujuan Bendahara (Total: ${formatRupiah(pendingDonasi)})`;
         }
         
-        let textStatus = `*╭────────────────────────╮*\n` +
-                         `*    📊 STATUS PROFILE ALUMNI    *\n` +
-                         `*╰────────────────────────╯*\n\n` +
-                         `👤 *Nama*        : ${alumnusData.nama}\n` +
-                         `🎓 *Angkatan*    : Lulus Tahun ${alumnusData.angkatan}\n` +
-                         `🏫 *Lembaga*     : ${alumnusData.lembaga || '-'}\n` +
-                         `📞 *No. WhatsApp*: +${cleanPhone}\n` +
-                         `📌 *Status Akun* : ${statusLabel}\n` +
-                         `🙋 *Kehadiran*   : ${kehadiranLabel}\n` +
-                         `💳 *Status Iuran* : ${paymentStatus}\n\n` +
-                         `Untuk melakukan konfirmasi pembayaran, silakan transfer ke rekening resmi panitia, lalu kirim bukti transfer dengan ketik *!konfirmasi [nominal]*\n` +
-                         `Contoh: *!konfirmasi 100000*`;
+        let textStatus = `*📊 STATUS PENDAFTARAN & KEUANGAN*\n` +
+                         `──────────────────────\n` +
+                         `👤 *Nama*      : ${alumnusData.nama}\n` +
+                         `🎓 *Angkatan*  : Lulus Tahun ${alumnusData.angkatan}\n` +
+                         `🏫 *Lembaga*   : ${alumnusData.lembaga || '-'}\n` +
+                         `📞 *WhatsApp*  : +${cleanPhone}\n` +
+                         `📌 *Akun*      : ${statusLabel}\n` +
+                         `🙋 *Kehadiran* : ${kehadiranLabel}\n` +
+                         `💳 *Iuran Kas* : ${paymentStatus}\n\n` +
+                         `Untuk konfirmasi pembayaran, silakan kirim foto struk/bukti transfer Anda dengan caption: *!konfirmasi [nominal] [nomor_wa_alumni_opsional]*\n` +
+                         `_(Contoh: *!konfirmasi 100000*)_`;
                          
         await sock.sendMessage(jid, { text: textStatus });
     } catch (err) {
         console.error('[WA BOT] Gagal memproses perintah !status:', err);
         await sock.sendMessage(jid, { text: '⚠️ Terjadi kesalahan saat memeriksa status Anda. Silakan hubungi panitia.' });
+    }
+}
+
+async function handleUndanganCommand(jid, m) {
+    try {
+        let senderJid = '';
+        if (jid && jid.endsWith('@g.us')) {
+            senderJid = m.key.participantPn || m.key.participant || '';
+        } else {
+            senderJid = m.key.senderPn || jid || '';
+        }
+        
+        const senderNumber = senderJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+        if (!senderNumber) {
+            await sock.sendMessage(jid, { text: '⚠️ Gagal mendeteksi nomor WhatsApp Anda.' });
+            return;
+        }
+        
+        function normalizeWA(raw) {
+            if (!raw) return "";
+            let num = raw.replace(/\D/g, '');
+            if (num.startsWith('620')) {
+                num = '62' + num.slice(3);
+            }
+            if (num.startsWith('0')) {
+                num = '62' + num.slice(1);
+            } else if (num.startsWith('8')) {
+                num = '62' + num;
+            }
+            return num;
+        }
+        
+        const cleanPhone = normalizeWA(senderNumber);
+        
+        const phoneFormats = [
+            cleanPhone,
+            '0' + cleanPhone.slice(2),
+            cleanPhone.slice(2)
+        ];
+        
+        const alumniCol = collection(db, 'alumni');
+        const q = query(alumniCol, where('nowa', 'in', phoneFormats));
+        const snap = await getDocs(q);
+        
+        if (snap.empty) {
+            const msgNotRegistered = `*⚠️ AJUKAN UNDANGAN REUNI*\n` +
+                                     `──────────────────────\n` +
+                                     `Nomor WhatsApp Anda (*+${cleanPhone}*) belum terdaftar di sistem alumni.\n\n` +
+                                     `Silakan ketik *daftar* untuk mendaftar terlebih dahulu agar sistem dapat membuat link undangan digital personal untuk Anda.`;
+            await sock.sendMessage(jid, { text: msgNotRegistered });
+            return;
+        }
+        
+        const alumnusData = snap.docs[0].data();
+        const inviteLink = `https://phajar.github.io/Reuni/surat-undangan.html?nama=${encodeURIComponent(alumnusData.nama)}&angkatan=${encodeURIComponent(alumnusData.angkatan)}&lembaga=${encodeURIComponent(alumnusData.lembaga || '')}`;
+        
+        const msg = `*💌 SURAT UNDANGAN DIGITAL PERSONAL*\n` +
+                    `──────────────────────\n` +
+                    `Halo *${alumnusData.nama}* (Angkatan ${alumnusData.angkatan || '-'}),\n\n` +
+                    `Berikut adalah link surat undangan resmi personal Anda untuk menghadiri Reuni Akbar AL-FATAH:\n\n` +
+                    `👉 *${inviteLink}*\n\n` +
+                    `Silakan buka tautan di atas untuk melihat surat resmi formal, mengunduh PDF resmi, atau mencetak surat undangan Anda.\n\n` +
+                    `_Sistem Bot Reuni PP Al-Fatah_`;
+                    
+        await sock.sendMessage(jid, { text: msg });
+    } catch (err) {
+        console.error('[WA BOT] Gagal memproses perintah !undangan:', err);
+        await sock.sendMessage(jid, { text: '⚠️ Terjadi kesalahan saat membuat undangan Anda. Silakan hubungi panitia.' });
     }
 }
 
@@ -2931,4 +3200,284 @@ function generateVisualReportSvg(inC, outC, saldo, transactions, logoBase64 = ''
 </svg>
     `;
     return svg;
+}
+
+function terbilang(nominal) {
+    const bil = ["", "Satu", "Dua", "Tiga", "Empat", "Lima", "Enam", "Tujuh", "Delapan", "Sembilan", "Sepuluh", "Sebelas"];
+    let temp = "";
+    if (nominal < 12) {
+        temp = " " + bil[nominal];
+    } else if (nominal < 20) {
+        temp = terbilang(nominal - 10) + " Belas";
+    } else if (nominal < 100) {
+        temp = terbilang(Math.floor(nominal / 10)) + " Puluh" + terbilang(nominal % 10);
+    } else if (nominal < 200) {
+        temp = " Seratus" + terbilang(nominal - 100);
+    } else if (nominal < 1000) {
+        temp = terbilang(Math.floor(nominal / 100)) + " Ratus" + terbilang(nominal % 100);
+    } else if (nominal < 2000) {
+        temp = " Seribu" + terbilang(nominal - 1000);
+    } else if (nominal < 1000000) {
+        temp = terbilang(Math.floor(nominal / 1000)) + " Ribu" + terbilang(nominal % 1000);
+    } else if (nominal < 1000000000) {
+        temp = terbilang(Math.floor(nominal / 1000000)) + " Juta" + terbilang(nominal % 1000000);
+    }
+    return temp.trim();
+}
+
+async function getImageAsBase64(urlOrBase64) {
+    if (!urlOrBase64) return '';
+    if (urlOrBase64.startsWith('data:image')) {
+        return urlOrBase64;
+    }
+    try {
+        const response = await fetch(urlOrBase64);
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const mimeType = response.headers.get('content-type') || 'image/png';
+        return `data:${mimeType};base64,${buffer.toString('base64')}`;
+    } catch (err) {
+        console.error('[WA BOT] Failed to fetch image from URL to Base64:', err.message);
+        return '';
+    }
+}
+
+function generateReceiptSvg(txId, txData, alumnusData, logoBase64 = '', signatureBase64 = '', bendaharaNama = 'Ahmad Pajar Bahri') {
+    const nominalVal = Number(txData.nominal) || 0;
+    const terbilangStr = terbilang(nominalVal) + " Rupiah";
+    const dateStr = txData.tanggal || new Date().toLocaleDateString("id-ID", {
+        day: "numeric",
+        month: "long",
+        year: "numeric"
+    });
+    
+    const receiptNo = `K-${txId.substring(0, 8).toUpperCase()}`;
+    
+    const svg = `
+<svg width="650" height="400" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f0fdf4"/>
+    </linearGradient>
+    <clipPath id="logoClip">
+      <circle cx="65" cy="65" r="28"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background Card -->
+  <rect width="650" height="400" fill="url(#cardGrad)" rx="16" stroke="#16a34a" stroke-width="4"/>
+  <rect x="8" y="8" width="634" height="384" fill="none" stroke="#e2e8f0" stroke-width="2" rx="12"/>
+
+  <!-- Logo and Letterhead -->
+  ${logoBase64 ? `
+  <image href="${logoBase64}" x="37" y="37" width="56" height="56" clip-path="url(#logoClip)" />
+  <circle cx="65" cy="65" r="28" fill="none" stroke="#16a34a" stroke-width="1.5" />
+  ` : `
+  <circle cx="65" cy="65" r="28" fill="#16a34a" opacity="0.1"/>
+  <path d="M 50 70 C 55 65 62 70 65 72 C 68 70 75 65 80 70 L 80 58 C 75 53 68 58 65 60 C 62 58 55 53 50 58 Z" fill="#16a34a"/>
+  `}
+  
+  <text x="110" y="52" font-family="'Plus Jakarta Sans', sans-serif" font-size="11" font-weight="900" fill="#1e293b" letter-spacing="0.5">REUNI AKBAR PONDOK PESANTREN</text>
+  <text x="110" y="72" font-family="'Plus Jakarta Sans', sans-serif" font-size="14" font-weight="900" fill="#16a34a" letter-spacing="0.5">AL-FATAH TEGALWARU PURWAKARTA</text>
+  <text x="110" y="88" font-family="'Plus Jakarta Sans', sans-serif" font-size="8" font-weight="bold" fill="#64748b" font-style="italic">Jl. BBI Cirata Kp. Cilangkap Tegalwaru Purwakarta 41165</text>
+
+  <!-- Divider Line -->
+  <line x1="30" y1="110" x2="620" y2="110" stroke="#16a34a" stroke-width="2"/>
+  <line x1="30" y1="114" x2="620" y2="114" stroke="#e2e8f0" stroke-width="1"/>
+
+  <!-- Receipt Title & Number -->
+  <text x="325" y="142" font-family="'Plus Jakarta Sans', sans-serif" font-size="16" font-weight="900" fill="#1e293b" text-anchor="middle" letter-spacing="1">KUITANSI BUKTI PEMBAYARAN</text>
+  <text x="325" y="160" font-family="'Plus Jakarta Sans', sans-serif" font-size="10" font-weight="bold" fill="#64748b" text-anchor="middle">No. Kuitansi: ${receiptNo}</text>
+
+  <!-- Content Grid -->
+  <g font-family="'Plus Jakarta Sans', sans-serif" font-size="12" fill="#334155">
+    <text x="40" y="200" font-weight="bold">Telah Diterima Dari</text>
+    <text x="180" y="200">:</text>
+    <text x="200" y="200" font-weight="900" fill="#0f172a">${alumnusData.nama}</text>
+    <text x="200" y="216" font-size="10" font-weight="bold" fill="#64748b">Angkatan ${alumnusData.angkatan || '-'} (${alumnusData.lembaga || '-'})</text>
+
+    <text x="40" y="244" font-weight="bold">Uang Sejumlah</text>
+    <text x="180" y="244">:</text>
+    <text x="200" y="244" font-style="italic" font-weight="bold" fill="#15803d"># ${terbilangStr} #</text>
+
+    <text x="40" y="276" font-weight="bold">Untuk Pembayaran</text>
+    <text x="180" y="276">:</text>
+    <text x="200" y="276" font-weight="bold" fill="#1e293b">Kontribusi Donasi Reuni Akbar PP AL-FATAH</text>
+  </g>
+
+  <!-- Nominal Box -->
+  <rect x="40" y="310" width="220" height="48" fill="#16a34a" rx="8"/>
+  <text x="55" y="341" font-family="'Plus Jakarta Sans', sans-serif" font-size="18" font-weight="900" fill="#ffffff">Rp ${formatRupiah(nominalVal).replace('Rp', '').trim()},-</text>
+
+  <!-- Sign / Place / Date -->
+  <text x="480" y="314" font-family="'Plus Jakarta Sans', sans-serif" font-size="11" font-weight="bold" fill="#64748b" text-anchor="middle">Purwakarta, ${dateStr}</text>
+  <text x="480" y="328" font-family="'Plus Jakarta Sans', sans-serif" font-size="11" font-weight="bold" fill="#0f172a" text-anchor="middle">Bendahara,</text>
+  
+  <!-- Signature Image or stroke simulation -->
+  ${signatureBase64 ? `
+  <image href="${signatureBase64}" x="410" y="326" width="140" height="39" />
+  ` : `
+  <path d="M 440 355 Q 470 330 480 365 T 510 345" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round"/>
+  `}
+  
+  <line x1="400" y1="366" x2="560" y2="366" stroke="#94a3b8" stroke-width="1"/>
+  <text x="480" y="380" font-family="'Plus Jakarta Sans', sans-serif" font-size="10" font-weight="900" fill="#0f172a" text-anchor="middle">${bendaharaNama}</text>
+
+  <!-- Seal Badge (Watermark) -->
+  <g transform="translate(560, 140) rotate(15)">
+    <rect x="-40" y="-15" width="80" height="30" fill="none" stroke="#16a34a" stroke-width="2" rx="4" opacity="0.3"/>
+    <text x="0" y="4" font-family="'Plus Jakarta Sans', sans-serif" font-size="10" font-weight="bold" fill="#16a34a" text-anchor="middle" opacity="0.3" letter-spacing="1">LUNAS</text>
+  </g>
+</svg>
+    `;
+    return svg;
+}
+
+async function sendOfficialReceipt(txId, txData) {
+    try {
+        let alumnusData = null;
+        let phone = txData.nowa || '';
+        
+        if (txData.ref_alumni_id) {
+            const alumnusRef = doc(db, 'alumni', txData.ref_alumni_id);
+            const alumnusSnap = await getDoc(alumnusRef);
+            if (alumnusSnap.exists()) {
+                alumnusData = alumnusSnap.data();
+                if (!phone) phone = alumnusData.nowa || '';
+            }
+        }
+        
+        if (!phone) {
+            console.warn(`[WA BOT] No phone number found for transaction ${txId}. Skipping receipt.`);
+            return;
+        }
+        
+        let rawPhone = phone.replace(/\D/g, '');
+        if (rawPhone.startsWith('0')) {
+            rawPhone = '62' + rawPhone.slice(1);
+        } else if (rawPhone.startsWith('8')) {
+            rawPhone = '62' + rawPhone;
+        }
+        const targetJid = rawPhone + '@s.whatsapp.net';
+        
+        if (!alumnusData) {
+            alumnusData = {
+                nama: txData.nama_pembayar || txData.nama || 'Donatur',
+                angkatan: txData.angkatan_pembayar || '-',
+                lembaga: txData.lembaga_pembayar || '-'
+            };
+        }
+        
+        let logoBase64 = '';
+        try {
+            const logoPath = path.join(__dirname, '..', 'img', 'logo.png');
+            if (fs.existsSync(logoPath)) {
+                const logoBuffer = fs.readFileSync(logoPath);
+                logoBase64 = `data:${getMimeType(logoBuffer)};base64,${logoBuffer.toString('base64')}`;
+            }
+        } catch (logoErr) {
+            console.error('[WA BOT] Gagal membaca logo.png:', logoErr.message);
+        }
+        
+        // Fetch bendahara details and signature from Firestore
+        let bendaharaData = { nama: 'Ahmad Pajar Bahri', jabatan: 'Bendahara', tanda_tangan: null };
+        try {
+            const panitiaCol = collection(db, 'panitia');
+            const panitiaSnapshot = await getDocs(panitiaCol);
+            panitiaSnapshot.forEach((doc) => {
+                const data = doc.data();
+                const jabatan = String(data.jabatan || '').toLowerCase();
+                if (jabatan.includes('bendahara')) {
+                    bendaharaData = {
+                        nama: data.nama || 'Ahmad Pajar Bahri',
+                        jabatan: data.jabatan || 'Bendahara',
+                        tanda_tangan: data.tanda_tangan || null
+                    };
+                }
+            });
+        } catch (panitiaErr) {
+            console.error('[WA BOT] Gagal memuat data bendahara dari Firestore:', panitiaErr.message);
+        }
+
+        let signatureBase64 = '';
+        if (bendaharaData.tanda_tangan) {
+            signatureBase64 = await getImageAsBase64(bendaharaData.tanda_tangan);
+        }
+        
+        const sharp = require('sharp');
+        const svgString = generateReceiptSvg(txId, txData, alumnusData, logoBase64, signatureBase64, bendaharaData.nama);
+        const imageBuffer = await sharp(Buffer.from(svgString)).png().toBuffer();
+        
+        const formattedNominal = formatRupiah(txData.nominal);
+        const dateStr = txData.tanggal || new Date().toLocaleString("id-ID");
+        
+        const captionText = `*✨ BUKTI PEMBAYARAN REUNI AL-FATAH ✨*\n` +
+                            `──────────────────────\n` +
+                            `Halo *${alumnusData.nama}* (Angkatan ${alumnusData.angkatan || "-"}),\n\n` +
+                            `Terima kasih, pembayaran donasi Anda sebesar *${formattedNominal}* telah berhasil diverifikasi dan dicatat oleh Bendahara.\n\n` +
+                            `*Rincian Transaksi:*\n` +
+                            `• *Kategori* : ${txData.kategori || "Donasi"}\n` +
+                            `• *Jumlah*   : *${formattedNominal}*\n` +
+                            `• *Tanggal*  : ${dateStr}\n` +
+                            `• *Status*   : Lunas / Berhasil 🟢\n\n` +
+                            `Unduh kuitansi resmi Anda di sini:\n` +
+                            `👉 https://phajar.github.io/Reuni/pembayaran.html?wa=${encodeURIComponent(rawPhone)}\n\n` +
+                            `Semoga menjadi amal ibadah dan membawa keberkahan bagi kita semua. Sampai jumpa di hari H reuni! 🤝\n\n` +
+                            `_Sistem Bot Reuni PP Al-Fatah_`;
+                            
+        await sock.sendMessage(targetJid, {
+            image: imageBuffer,
+            caption: captionText
+        });
+        
+        console.log(`[WA BOT] Official receipt sent to JID: ${targetJid}`);
+        
+        // Fetch token_keuangan to authorize the update in firestore rules
+        let tokenKeuangan = '';
+        try {
+            const waConfigSnap = await getDoc(doc(db, 'settings', 'whatsapp_api'));
+            if (waConfigSnap.exists()) {
+                tokenKeuangan = waConfigSnap.data().token_keuangan || '';
+            }
+        } catch (tokenErr) {
+            console.error('[WA BOT] Gagal membaca token_keuangan untuk update kuitansi:', tokenErr);
+        }
+
+        const txRef = doc(db, 'finance', txId);
+        await setDoc(txRef, { 
+            receipt_sent: true,
+            bot_token: tokenKeuangan
+        }, { merge: true });
+        
+    } catch (err) {
+        console.error(`[WA BOT] Failed to send receipt for transaction ${txId}:`, err);
+    }
+}
+
+function initFinanceReceiptListener(db) {
+    console.log('[WA BOT] Initializing real-time listener for finance receipts...');
+    const financeCol = collection(db, 'finance');
+    
+    onSnapshot(financeCol, (snapshot) => {
+        snapshot.docChanges().forEach(async (change) => {
+            if (change.type === 'added' || change.type === 'modified') {
+                const data = change.doc.data();
+                const txId = change.doc.id;
+                
+                const isPaid = data.status === 'pemasukan' || data.status === 'approved';
+                const notSent = !data.receipt_sent;
+                const isRecent = (data.created_at && data.created_at >= botStartupTime) || 
+                                 (data.updated_at && data.updated_at >= botStartupTime);
+                                 
+                if (isPaid && notSent && isRecent) {
+                    console.log(`[WA BOT] Triggering receipt for transaction ${txId} (${data.nama_pembayar})`);
+                    await sendOfficialReceipt(txId, data);
+                }
+            }
+        });
+    }, (err) => {
+        console.error('[WA BOT] Error in finance receipts listener:', err);
+    });
 }
