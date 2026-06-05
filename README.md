@@ -66,7 +66,41 @@ Setelah server bot aktif, Anda harus mendaftarkan URL server bot di Admin Panel 
 2.  Pilih tab **Cloud API Gateway** di kolom kiri.
 3.  Isi kolom **URL API WhatsApp Lokal** dengan alamat server bot Anda (contoh: `http://localhost:7860`). Jika menggunakan kunci keamanan API, tambahkan pemisah pipa (contoh: `http://localhost:7860|kunci_api_anda`).
 4.  Klik **Simpan Pengaturan Gateway**.
-5.  Kembali ke tab **Local Bot Server** di kolom kiri, lalu klik **Muat Ulang QR** untuk menautkan WhatsApp Anda.
+5.    Kembali ke tab **Local Bot Server** di kolom kiri, lalu klik **Muat Ulang QR** untuk menautkan WhatsApp Anda.
+
+---
+
+## Panduan Uninstall & Pembersihan Sesi
+
+Jika Anda ingin menghentikan penggunaan, membersihkan data sesi koneksi WhatsApp, atau menghapus total modul bot ini dari sistem Anda:
+
+### 1. Menghentikan Bot & Memutuskan Sesi
+*   **Melalui Admin Panel**: Buka halaman **WhatsApp Center** &rarr; tab **Local Bot Server** &rarr; klik tombol **Reset Sesi** pada panel Danger Zone. Langkah ini akan menghapus sesi pada server bot secara aman dan memutuskan tautan WhatsApp.
+*   **Melalui Terminal**: Tekan tombol `Ctrl + C` pada jendela command prompt tempat bot berjalan untuk mematikan server.
+
+### 2. Membersihkan Data Kredensial WhatsApp Lokal
+Jika Anda ingin menghapus seluruh data sesi lokal agar dapat masuk dengan akun WhatsApp lain dari awal:
+```bash
+# Masuk ke direktori bot
+cd whatsapp-bot
+
+# Hapus folder kredensial enkripsi sesi
+rmdir /s /q auth_info
+```
+
+### 3. Membersihkan Modul Dependensi (Penyimpanan)
+Untuk menghapus library modul pihak ketiga yang sebelumnya terpasang:
+```bash
+# Hapus folder modul library pihak ketiga
+rmdir /s /q node_modules
+```
+
+### 4. Menghapus Bot Secara Total
+Setelah menghentikan proses dan menghapus data di atas, Anda dapat menghapus seluruh direktori `whatsapp-bot` secara langsung melalui File Explorer atau perintah:
+```bash
+cd ..
+rmdir /s /q whatsapp-bot
+```
 
 ---
 
