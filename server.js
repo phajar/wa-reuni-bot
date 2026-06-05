@@ -1867,24 +1867,28 @@ async function handleMenuCommand(jid, m) {
         const adminList = (currentBotConfig.approval_admins || '').split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean);
         const isAuthorized = adminList.includes(senderNumber);
         
-        let menuMsg = `*✨ DAFTAR MENU PERINTAH VALID ✨*\n\n` +
-                      `Berikut adalah perintah-perintah yang dapat Anda kirimkan ke bot ini:\n\n` +
-                      `*🌐 PERINTAH ALUMNI:*\n` +
-                      `• *!saldo*\n` +
-                      `• *!laporan*\n` +
-                      `• *!iuran*\n` +
-                      `• *!konfirmasi [nominal]*\n` +
-                      `• *!menu*\n` +
-                      `• *!help*\n\n`;
+        let menuMsg = `*╭────────────────────────╮*\n` +
+                      `*   ✨ MENU UTAMA BOT REUNI ✨   *\n` +
+                      `*╰────────────────────────╯*\n\n` +
+                      `Halo! Berikut adalah daftar perintah valid yang dapat Anda gunakan pada bot ini:\n\n` +
+                      `*🌐 PERINTAH ALUMNI*\n` +
+                      `┌  *!saldo* : Cek saldo kas riil saat ini\n` +
+                      `├  *!laporan* : Laporan keuangan & 5 transaksi terakhir\n` +
+                      `├  *!iuran* : Cara iuran & QRIS dinamis\n` +
+                      `├  *!konfirmasi [nominal]* : Lapor bukti transfer\n` +
+                      `├  *!menu* : Tampilkan menu ringkas ini\n` +
+                      `└  *!help* : Bantuan detail & penjelasan perintah\n\n`;
                       
         if (isAuthorized) {
-            menuMsg += `*🛡️ PERINTAH KHUSUS ADMIN:*\n` +
-                       `• *!setuju [ID]*\n` +
-                       `• *!setuju-alumni [ID]*\n` +
-                       `• *!backup-db*\n\n`;
+            menuMsg += `*🛡️ PERINTAH KHUSUS ADMIN* (Terotorisasi)\n` +
+                       `┌  *!setuju [ID]* : Setujui transaksi donasi\n` +
+                       `├  *!setuju-alumni [ID]* : Setujui alumni baru\n` +
+                       `└  *!backup-db* : Unduh cadangan database JSON\n\n`;
         }
         
-        menuMsg += `Ketik *!help* untuk melihat penjelasan detail cara menggunakan setiap perintah.`;
+        menuMsg += `──────────────────────────\n` +
+                   `Ketik *!help* untuk melihat panduan detail penggunaan setiap perintah.\n` +
+                   `_Sistem Bot Reuni Akbar PP AL-FATAH_`;
         
         await sock.sendMessage(jid, { text: menuMsg });
     } catch (err) {
@@ -1907,21 +1911,35 @@ async function handleHelpCommand(jid, m) {
         const adminList = (currentBotConfig.approval_admins || '').split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean);
         const isAuthorized = adminList.includes(senderNumber);
         
-        let helpMsg = `*✨ PANDUAN BANTUAN BOT REUNI ✨*\n\n` +
-                      `Berikut penjelasan cara menggunakan perintah bot Reuni AL-FATAH:\n\n` +
-                      `*🌐 UNTUK ALUMNI:*\n` +
-                      `• *!saldo* : Menampilkan total pemasukan, pengeluaran, dan saldo kas riil saat ini secara real-time.\n` +
-                      `• *!laporan* : Menampilkan ringkasan dana beserta detail 5 transaksi kas terakhir.\n` +
-                      `• *!iuran* : Menampilkan rekening bank resmi panitia beserta QRIS dinamis untuk pembayaran.\n` +
-                      `• *!konfirmasi [nominal]* : Melaporkan donasi/pembayaran iuran secara instan sambil melampirkan foto struk/bukti transfer. Contoh: kirim foto struk dengan caption *!konfirmasi 150000*.\n` +
-                      `• *!menu* : Menampilkan daftar ringkas semua perintah valid.\n` +
-                      `• *!help* : Menampilkan halaman bantuan ini.\n\n`;
+        let helpMsg = `*╭────────────────────────╮*\n` +
+                      `*  ✨ PANDUAN PENGGUNAAN BOT ✨  *\n` +
+                      `*╰────────────────────────╯*\n\n` +
+                      `Berikut adalah panduan lengkap dan contoh penggunaan untuk setiap perintah bot Reuni AL-FATAH:\n\n` +
+                      `*🌐 UNTUK ALUMNI*\n\n` +
+                      `📝 *!saldo*\n` +
+                      `Menampilkan total pemasukan, pengeluaran, dan saldo kas riil saat ini secara real-time.\n\n` +
+                      `📊 *!laporan*\n` +
+                      `Mengirimkan gambar infografis laporan keuangan formal resmi lengkap beserta rincian 5 transaksi kas terbaru.\n\n` +
+                      `💳 *!iuran*\n` +
+                      `Menampilkan informasi rekening bank panitia beserta gambar QRIS dinamis untuk pembayaran.\n\n` +
+                      `📩 *!konfirmasi [nominal]*\n` +
+                      `Melaporkan bukti transfer. Kirim/lampirkan foto struk transfer Anda dengan caption:\n` +
+                      `👉 Contoh: *!konfirmasi 150000*\n\n` +
+                      `📋 *!menu*\n` +
+                      `Menampilkan ringkasan seluruh daftar perintah valid.\n\n` +
+                      `❓ *!help*\n` +
+                      `Menampilkan halaman panduan bantuan ini.\n\n` +
+                      `──────────────────────────\n`;
                       
         if (isAuthorized) {
-            helpMsg += `*🛡️ UNTUK ADMIN (TEROTORISASI):*\n` +
-                       `• *!setuju [ID]* : Menyetujui transaksi donasi (atau reply pesan bukti transfer terusan dari bot dengan ketik *!setuju*).\n` +
-                       `• *!setuju-alumni [ID]* : Menyetujui pendaftaran alumni baru (atau reply pesan pendaftaran terusan dari bot dengan ketik *!setuju-alumni*).\n` +
-                       `• *!backup-db* : Mengunduh cadangan lengkap seluruh koleksi database Firestore dalam format JSON.\n\n`;
+            helpMsg += `*🛡️ UNTUK ADMIN TEROTORISASI*\n\n` +
+                       `✅ *!setuju [ID_Transaksi]*\n` +
+                       `Menyetujui pendaftaran donasi pending. (Atau reply/balas pesan bukti transfer terusan dari bot dengan mengetik *!setuju*).\n\n` +
+                       `👥 *!setuju-alumni [ID_Alumni]*\n` +
+                       `Menyetujui pendaftaran alumni baru. (Atau reply/balas pesan notifikasi alumni baru dari bot dengan mengetik *!setuju-alumni*).\n\n` +
+                       `💾 *!backup-db*\n` +
+                       `Mengunduh cadangan lengkap seluruh koleksi database dalam format JSON.\n\n` +
+                       `──────────────────────────\n`;
         }
         
         helpMsg += `_Sistem Bot Reuni Akbar Pondok Pesantren AL-FATAH_`;
