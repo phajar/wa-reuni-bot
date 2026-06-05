@@ -268,13 +268,13 @@ async function connectToWhatsApp() {
             
             // Cek pendaftaran alumni interaktif via chat bot
             if (regSessions.has(jid)) {
-                await handleRegistrationFlow(jid, cleanMsg);
+                await handleRegistrationFlow(jid, cleanMsg, m);
                 return;
             }
 
             if (command === '!daftar' || command === 'daftar' || command === 'registrasi') {
                 console.log(`[WA BOT] Perintah pendaftaran dari ${jid}`);
-                await startRegistrationFlow(jid);
+                await startRegistrationFlow(jid, m);
                 return;
             }
             
@@ -1193,7 +1193,7 @@ function validateAddressDetails(addressStr, extracted) {
 
 // --- INTERACTIVE REGISTRATION FLOW FOR ALUMNI VIA WHATSAPP ---
 
-async function startRegistrationFlow(jid) {
+async function startRegistrationFlow(jid, m) {
     if (jid.endsWith('@g.us')) {
         const botNumber = connectionUser || '';
         const botLink = botNumber ? `https://wa.me/${botNumber}?text=daftar` : 'chat pribadi';
@@ -1204,7 +1204,19 @@ async function startRegistrationFlow(jid) {
     }
 
     try {
-        const cleanPhone = jid.split('@')[0];
+        let senderJid = '';
+        if (jid && jid.endsWith('@g.us')) {
+            senderJid = m.key.participantPn || m.key.participant || '';
+        } else {
+            senderJid = m.key.senderPn || jid || '';
+        }
+        const cleanPhone = senderJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+        
+        if (!cleanPhone) {
+            await sock.sendMessage(jid, { text: '⚠️ Gagal mendeteksi nomor WhatsApp Anda. Silakan hubungi panitia.' });
+            return;
+        }
+
         const alumniCol = collection(db, 'alumni');
         const q = query(alumniCol, where('nowa', '==', cleanPhone));
         const querySnapshot = await getDocs(q);
@@ -1217,7 +1229,7 @@ async function startRegistrationFlow(jid) {
             });
             return;
         }
-
+        
         regSessions.set(jid, {
             step: 1,
             data: {
@@ -1228,7 +1240,7 @@ async function startRegistrationFlow(jid) {
         });
 
         await sock.sendMessage(jid, {
-            text: `👋 *Selamat Datang di Pendaftaran Reuni Akbar Ponpes AL-FATAH*\n\nSaya akan memandu Anda untuk mendaftar secara otomatis langsung dari WhatsApp.\n\n👉 *Langkah 1 dari 3*\nSilakan ketik *Nama Lengkap* Anda:`
+            text: `👋 *Selamat Datang di Pendaftaran Reuni Akbar Ponpes AL-FATAH*\n\nSaya akan memandu Anda untuk mendaftar secara otomatis langsung dari WhatsApp.\n\n👉 *Langkah 1 dari 4*\nSilakan ketik *Nama Lengkap* Anda:`
         });
     } catch (err) {
         console.error('[WA BOT] Gagal memulai registrasi:', err);
@@ -1236,7 +1248,7 @@ async function startRegistrationFlow(jid) {
     }
 }
 
-async function handleRegistrationFlow(jid, cleanMsg) {
+async function handleRegistrationFlow(jid, cleanMsg, m) {
     const session = regSessions.get(jid);
     if (!session) return;
 
@@ -1260,7 +1272,7 @@ async function handleRegistrationFlow(jid, cleanMsg) {
             session.data.nama = capitalizeName(cleanMsg);
             session.step = 2;
             await sock.sendMessage(jid, {
-                text: `👤 *Nama:* ${session.data.nama}\n\n👉 *Langkah 2 dari 3*\nTahun berapa Anda lulus dari Ponpes AL-FATAH?\n(Contoh ketik: *2012* atau *2015*):`
+                text: `👤 *Nama:* ${session.data.nama}\n\n👉 *Langkah 2 dari 4*\nTahun berapa Anda lulus dari Ponpes AL-FATAH?\n(Contoh ketik: *2012* atau *2015*):`
             });
             break;
 
@@ -1273,15 +1285,33 @@ async function handleRegistrationFlow(jid, cleanMsg) {
             session.data.angkatan = angkatanNum;
             session.step = 3;
             await sock.sendMessage(jid, {
-                text: `🎓 *Angkatan:* Lulus Tahun ${session.data.angkatan}\n\n👉 *Langkah 3 dari 3*\nSilakan ketik *Alamat Lengkap* Anda saat ini.\n\n*⚠️ KETENTUAN:*
-Alamat harus memuat detail *Dusun/Kampung/Blok*, *RT/RW*, serta *Desa*, *Kecamatan*, dan *Kabupaten*.
-
-*Contoh:*
-_Kp. Babakan RT 02/05 Desa Cadasmekar, Kec. Tegalwaru, Kab. Purwakarta, Jawa Barat_`
+                text: `🎓 *Angkatan:* Lulus Tahun ${session.data.angkatan}\n\n👉 *Langkah 3 dari 4*\nPilih Lembaga pendidikan terakhir Anda di Ponpes AL-FATAH:\n1. *MA* (Madrasah Aliyah)\n2. *MTs* (Madrasah Tsanawiyah)\n\n(Silakan ketik angka *1*, *2*, atau tulis langsung *MA* / *MTs*):`
             });
             break;
 
-        case 3: // Alamat Lengkap & Ekstraksi Wilayah
+        case 3: // Lembaga (MA / MTs)
+            let chosenLembaga = '';
+            if (cleanMsg === '1' || textUpper === 'MA') {
+                chosenLembaga = 'MA';
+            } else if (cleanMsg === '2' || textUpper === 'MTS') {
+                chosenLembaga = 'MTs';
+            }
+
+            if (!chosenLembaga) {
+                await sock.sendMessage(jid, {
+                    text: `⚠️ *Pilihan tidak valid.*\n\nSilakan pilih Lembaga pendidikan Anda:\n1. *MA* (Madrasah Aliyah)\n2. *MTs* (Madrasah Tsanawiyah)\n\n(Ketik angka *1*, *2*, atau tulis langsung *MA* / *MTs*):`
+                });
+                return;
+            }
+
+            session.data.lembaga = chosenLembaga;
+            session.step = 4;
+            await sock.sendMessage(jid, {
+                text: `🏫 *Lembaga:* ${session.data.lembaga}\n\n👉 *Langkah 4 dari 4*\nSilakan ketik *Alamat Lengkap* Anda saat ini.\n\n*⚠️ KETENTUAN:*\nAlamat harus memuat detail *Dusun/Kampung/Blok*, *RT/RW*, serta *Desa*, *Kecamatan*, dan *Kabupaten*.\n\n*Contoh:*\n_Kp. Babakan RT 02/05 Desa Cadasmekar, Kec. Tegalwaru, Kab. Purwakarta, Jawa Barat_`
+            });
+            break;
+
+        case 4: // Alamat Lengkap & Ekstraksi Wilayah
             await sock.sendMessage(jid, { text: '🔄 _Sedang memproses dan mendeteksi wilayah alamat Anda, mohon tunggu..._' });
             
             try {
@@ -1300,18 +1330,19 @@ _Kp. Babakan RT 02/05 Desa Cadasmekar, Kec. Tegalwaru, Kab. Purwakarta, Jawa Bar
                 session.data.kecamatan = capitalizeName(extracted.kecamatan);
                 session.data.desa = capitalizeName(extracted.desa);
                 
-                session.step = 4;
+                session.step = 5;
                 
                 // Tampilkan Ringkasan & Konfirmasi
                 const summary = `📝 *RINGKASAN PENDAFTARAN REUNI*
-
+ 
 Silakan periksa kembali data Anda:
 👤 *Nama:* ${session.data.nama}
 🎓 *Angkatan:* Lulus Tahun ${session.data.angkatan}
+🏫 *Lembaga:* ${session.data.lembaga}
 📞 *No. WhatsApp:* +${session.data.nowa}
 📍 *Alamat:* ${session.data.alamat}
 🗺️ *Wilayah Terdeteksi:* Desa ${session.data.desa}, Kec. ${session.data.kecamatan}, Kab. ${session.data.kabupaten}, Prov. ${session.data.provinsi}
-
+ 
 Apakah data di atas sudah benar?
 👉 Ketik *YA* jika sudah benar dan ingin menyimpan.
 👉 Ketik *BATAL* untuk membatalkan pendaftaran.`;
@@ -1322,7 +1353,7 @@ Apakah data di atas sudah benar?
             }
             break;
 
-        case 4: // Konfirmasi Akhir
+        case 5: // Konfirmasi Akhir
             if (textUpper === 'YA') {
                 try {
                     const alumniCol = collection(db, 'alumni');
