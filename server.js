@@ -61,6 +61,7 @@ let qrCode = null;
 let connectionStatus = 'connecting'; // 'connecting', 'qr', 'open', 'close'
 let connectionUser = null;
 let lastSyncHash = '';
+const regSessions = new Map(); // key: sender JID, value: { step, data: {} }
 
 // Helper to download session from Firestore
 async function downloadSession(db) {
@@ -264,6 +265,18 @@ async function connectToWhatsApp() {
             if (!msgText) return;
             const cleanMsg = msgText.trim();
             const command = cleanMsg.toLowerCase();
+            
+            // Cek pendaftaran alumni interaktif via chat bot
+            if (regSessions.has(jid)) {
+                await handleRegistrationFlow(jid, cleanMsg);
+                return;
+            }
+
+            if (command === '!daftar' || command === 'daftar' || command === 'registrasi') {
+                console.log(`[WA BOT] Perintah pendaftaran dari ${jid}`);
+                await startRegistrationFlow(jid);
+                return;
+            }
             
             if (command === '!saldo') {
                 console.log(`[WA BOT] Perintah !saldo dari ${jid}`);
@@ -736,6 +749,184 @@ const PORT = process.env.PORT || 7860;
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
+
+// --- INTERACTIVE REGISTRATION FLOW FOR ALUMNI VIA WHATSAPP ---
+
+async function startRegistrationFlow(jid) {
+    if (jid.endsWith('@g.us')) {
+        const botNumber = connectionUser || '';
+        const botLink = botNumber ? `https://wa.me/${botNumber}?text=daftar` : 'chat pribadi';
+        await sock.sendMessage(jid, { 
+            text: `⚠️ *Pendaftaran Mandiri harus dilakukan melalui Chat Pribadi (PC).*\n\nSilakan kirim pesan ke chat pribadi bot ini atau klik tautan berikut untuk memulai pendaftaran:\n👉 ${botLink}` 
+        });
+        return;
+    }
+
+    try {
+        const cleanPhone = jid.split('@')[0];
+        const alumniCol = collection(db, 'alumni');
+        const q = query(alumniCol, where('nowa', '==', cleanPhone));
+        const querySnapshot = await getDocs(q);
+        
+        if (!querySnapshot.empty) {
+            const alumniDoc = querySnapshot.docs[0].data();
+            const statusLabel = alumniDoc.status === 'approved' ? 'Disetujui / Aktif' : 'Menunggu Peninjauan';
+            await sock.sendMessage(jid, { 
+                text: `⚠️ *Nomor Anda Sudah Terdaftar*\n\nData Anda sudah tercatat di sistem reuni:\n👤 *Nama:* ${alumniDoc.nama}\n🎓 *Angkatan:* Lulus Tahun ${alumniDoc.angkatan}\n📌 *Status Pendaftaran:* ${statusLabel}\n\nKetik *!status* untuk informasi status pembayaran atau kehadiran Anda.` 
+            });
+            return;
+        }
+
+        // Mulai sesi pendaftaran baru
+        regSessions.set(jid, {
+            step: 1,
+            data: {
+                nowa: cleanPhone,
+                status: 'pending',
+                created_at: new Date().toISOString()
+            }
+        });
+
+        await sock.sendMessage(jid, {
+            text: `👋 *Selamat Datang di Pendaftaran Reuni Akbar Ponpes AL-FATAH*\n\nSaya akan memandu Anda untuk mendaftar secara otomatis langsung dari WhatsApp.\n\n👉 *Langkah 1 dari 6*\nSilakan ketik *Nama Lengkap* Anda:`
+        });
+    } catch (err) {
+        console.error('[WA BOT] Gagal memulai registrasi:', err);
+        await sock.sendMessage(jid, { text: '⚠️ Terjadi kesalahan saat mengakses sistem. Silakan coba kembali dengan ketik *daftar*.' });
+    }
+}
+
+async function handleRegistrationFlow(jid, cleanMsg) {
+    const session = regSessions.get(jid);
+    if (!session) return;
+
+    const textUpper = cleanMsg.toUpperCase();
+    if (textUpper === 'BATAL' || textUpper === '!BATAL') {
+        regSessions.delete(jid);
+        await sock.sendMessage(jid, { text: '❌ *Pendaftaran Dibatalkan.*\n\nKetik *daftar* kapan saja jika Anda ingin memulai pendaftaran ulang kembali.' });
+        return;
+    }
+
+    const capitalizeName = (str) => {
+        return str.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+    };
+
+    switch (session.step) {
+        case 1: // Nama Lengkap
+            if (cleanMsg.length < 3 || cleanMsg.length > 100) {
+                await sock.sendMessage(jid, { text: '⚠️ *Nama tidak valid.*\n\nSilakan masukkan Nama Lengkap Anda dengan benar (minimal 3 karakter dan maks 100 karakter):' });
+                return;
+            }
+            session.data.nama = capitalizeName(cleanMsg);
+            session.step = 2;
+            await sock.sendMessage(jid, {
+                text: `👤 *Nama:* ${session.data.nama}\n\n👉 *Langkah 2 dari 6*\nTahun berapa Anda lulus dari Ponpes AL-FATAH?\n(Contoh ketik: *2012* atau *2015*):`
+            });
+            break;
+
+        case 2: // Angkatan (Tahun Lulus)
+            const angkatanNum = parseInt(cleanMsg.replace(/\D/g, ''), 10);
+            if (isNaN(angkatanNum) || angkatanNum < 1970 || angkatanNum > 2030) {
+                await sock.sendMessage(jid, { text: '⚠️ *Tahun lulus tidak valid.*\n\nSilakan masukkan tahun lulus Anda dengan benar (berupa 4 angka, antara *1970* hingga *2030*):' });
+                return;
+            }
+            session.data.angkatan = angkatanNum;
+            session.step = 3;
+            await sock.sendMessage(jid, {
+                text: `🎓 *Angkatan:* Lulus Tahun ${session.data.angkatan}\n\n👉 *Langkah 3 dari 6*\nDari *provinsi* mana Anda tinggal saat ini? (Contoh ketik: *Jawa Barat* atau *DKI Jakarta*):`
+            });
+            break;
+
+        case 3: // Provinsi
+            if (cleanMsg.length < 2 || cleanMsg.length > 100) {
+                await sock.sendMessage(jid, { text: '⚠️ *Nama provinsi tidak valid.*\n\nSilakan masukkan nama provinsi Anda dengan benar:' });
+                return;
+            }
+            session.data.provinsi = capitalizeName(cleanMsg);
+            session.step = 4;
+            await sock.sendMessage(jid, {
+                text: `📍 *Provinsi:* ${session.data.provinsi}\n\n👉 *Langkah 4 dari 6*\nDari *kabupaten/kota* mana? (Contoh ketik: *Purwakarta* atau *Bandung Barat*):`
+            });
+            break;
+
+        case 4: // Kabupaten
+            if (cleanMsg.length < 2 || cleanMsg.length > 100) {
+                await sock.sendMessage(jid, { text: '⚠️ *Nama kabupaten/kota tidak valid.*\n\nSilakan masukkan nama kabupaten/kota Anda dengan benar:' });
+                return;
+            }
+            session.data.kabupaten = capitalizeName(cleanMsg);
+            session.step = 5;
+            await sock.sendMessage(jid, {
+                text: `📍 *Kabupaten/Kota:* ${session.data.kabupaten}\n\n👉 *Langkah 5 dari 6*\nDari *kecamatan* mana? (Contoh ketik: *Tegalwaru* atau *Cikalongwetan*):`
+            });
+            break;
+
+        case 5: // Kecamatan
+            if (cleanMsg.length < 2 || cleanMsg.length > 100) {
+                await sock.sendMessage(jid, { text: '⚠️ *Nama kecamatan tidak valid.*\n\nSilakan masukkan nama kecamatan Anda dengan benar:' });
+                return;
+            }
+            session.data.kecamatan = capitalizeName(cleanMsg);
+            session.step = 6;
+            await sock.sendMessage(jid, {
+                text: `📍 *Kecamatan:* ${session.data.kecamatan}\n\n👉 *Langkah 6 dari 6*\nTerakhir, dari *desa/kelurahan* mana? (Contoh ketik: *Cadasmekar* atau *Rende*):`
+            });
+            break;
+
+        case 6: // Desa
+            if (cleanMsg.length < 2 || cleanMsg.length > 100) {
+                await sock.sendMessage(jid, { text: '⚠️ *Nama desa/kelurahan tidak valid.*\n\nSilakan masukkan nama desa/kelurahan Anda dengan benar:' });
+                return;
+            }
+            session.data.desa = capitalizeName(cleanMsg);
+            session.step = 7;
+            
+            // Tampilkan Ringkasan & Konfirmasi
+            const summary = `📝 *RINGKASAN PENDAFTARAN REUNI*
+
+Silakan periksa kembali data Anda:
+👤 *Nama:* ${session.data.nama}
+🎓 *Angkatan:* Lulus Tahun ${session.data.angkatan}
+📞 *No. WhatsApp:* +${session.data.nowa}
+📍 *Alamat:* Desa ${session.data.desa}, Kec. ${session.data.kecamatan}, Kab. ${session.data.kabupaten}, Prov. ${session.data.provinsi}
+
+Apakah data di atas sudah benar?
+👉 Ketik *YA* jika sudah benar dan ingin menyimpan.
+👉 Ketik *BATAL* untuk membatalkan pendaftaran.`;
+            await sock.sendMessage(jid, { text: summary });
+            break;
+
+        case 7: // Konfirmasi Akhir
+            if (textUpper === 'YA') {
+                try {
+                    // Simpan data ke Firestore
+                    const alumniCol = collection(db, 'alumni');
+                    await addDoc(alumniCol, session.data);
+                    
+                    // Trigger sync_state versi alumni baru agar memicu update di web portal
+                    try {
+                        const syncRef = doc(db, 'settings', 'sync_state');
+                        await setDoc(syncRef, { alumni_version: Date.now().toString() }, { merge: true });
+                    } catch (syncErr) {
+                        console.error('[WA BOT] Gagal mengupdate sync_state:', syncErr);
+                    }
+                    
+                    await sock.sendMessage(jid, {
+                        text: `🎉 *Alhamdulillah, Pendaftaran Anda Berhasil!* 🎉\n\nData Anda telah tersimpan di sistem dengan status *Menunggu Peninjauan*.\n\n*Langkah Selanjutnya:*\nSilakan lakukan pembayaran kontribusi iuran reuni melalui menu *keuangan* atau ketik *!iuran* untuk melihat rekening bank / QRIS panitia.\n\nKetik *!status* untuk mengecek status pendaftaran Anda secara berkala.\n\nTerima kasih atas partisipasinya!`
+                    });
+                    
+                    regSessions.delete(jid);
+                } catch (err) {
+                    console.error('[WA BOT] Gagal menyimpan pendaftaran via WA:', err);
+                    await sock.sendMessage(jid, { text: '⚠️ Terjadi kesalahan saat menyimpan data pendaftaran Anda. Silakan ketik *daftar* untuk memulai ulang.' });
+                    regSessions.delete(jid);
+                }
+            } else {
+                await sock.sendMessage(jid, { text: '⚠️ Jawaban tidak valid. Silakan ketik *YA* jika data sudah benar, atau ketik *BATAL* untuk membatalkan.' });
+            }
+            break;
+    }
+}
 
 // --- HELPER FUNCTIONS FOR INTERACTIVE BOT & CRON SCHEDULER ---
 
@@ -1935,7 +2126,8 @@ async function handleMenuCommand(jid, m) {
                       `*╰────────────────────────╯*\n\n` +
                       `Halo! Berikut adalah daftar perintah valid yang dapat Anda gunakan pada bot ini:\n\n` +
                       `*🌐 PERINTAH ALUMNI*\n` +
-                      `┌  *!saldo* : Cek saldo kas riil saat ini\n` +
+                      `┌  *daftar* : Mulai pendaftaran alumni mandiri\n` +
+                      `├  *!saldo* : Cek saldo kas riil saat ini\n` +
                       `├  *!laporan* : Laporan keuangan & 5 transaksi terakhir\n` +
                       `├  *!iuran* : Cara iuran & QRIS dinamis\n` +
                       `├  *!konfirmasi [nominal]* : Lapor bukti transfer\n` +
@@ -1979,6 +2171,8 @@ async function handleHelpCommand(jid, m) {
                       `*╰────────────────────────╯*\n\n` +
                       `Berikut adalah panduan lengkap dan contoh penggunaan untuk setiap perintah bot Reuni AL-FATAH:\n\n` +
                       `*🌐 UNTUK ALUMNI*\n\n` +
+                      `📝 *daftar*\n` +
+                      `Memulai proses pendaftaran mandiri alumni baru secara interaktif langsung melalui chat bot ini.\n\n` +
                       `📝 *!saldo*\n` +
                       `Menampilkan total pemasukan, pengeluaran, dan saldo kas riil saat ini secara real-time.\n\n` +
                       `📊 *!laporan*\n` +
