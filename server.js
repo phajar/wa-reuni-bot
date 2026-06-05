@@ -5,6 +5,14 @@ const path = require('path');
 const pino = require('pino');
 const dns = require('dns');
 
+// Prevent Node.js process from crashing on unhandled socket/network exceptions
+process.on('uncaughtException', (err) => {
+    console.error('[WA BOT] Uncaught Exception caught globally:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[WA BOT] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 // Force IPv4 resolution first to bypass IPv6 handshake timeouts on Hugging Face Spaces
 dns.setDefaultResultOrder('ipv4first');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, downloadContentFromMessage } = require('@whiskeysockets/baileys');
