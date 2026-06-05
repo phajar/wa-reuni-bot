@@ -305,6 +305,9 @@ async function connectToWhatsApp() {
             } else if (command === '!help') {
                 console.log(`[WA BOT] Perintah !help dari ${jid}`);
                 await handleHelpCommand(jid, m);
+            } else if (command === '!status') {
+                console.log(`[WA BOT] Perintah !status dari ${jid}`);
+                await handleStatusCommand(jid, m);
             }
         } catch (err) {
             console.error('[WA BOT] Gagal memproses pesan masuk:', err);
@@ -2660,6 +2663,106 @@ async function handleHelpCommand(jid, m) {
     } catch (err) {
         console.error('[WA BOT] Gagal memproses perintah !help:', err);
         await sock.sendMessage(jid, { text: 'Maaf, terjadi kesalahan saat memproses perintah bantuan.' });
+    }
+}
+
+async function handleStatusCommand(jid, m) {
+    try {
+        let senderJid = '';
+        if (jid && jid.endsWith('@g.us')) {
+            senderJid = m.key.participantPn || m.key.participant || '';
+        } else {
+            senderJid = m.key.senderPn || jid || '';
+        }
+        
+        const senderNumber = senderJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+        if (!senderNumber) {
+            await sock.sendMessage(jid, { text: '⚠️ Gagal mendeteksi nomor WhatsApp Anda.' });
+            return;
+        }
+        
+        function normalizeWA(raw) {
+            if (!raw) return "";
+            let num = raw.replace(/\D/g, '');
+            if (num.startsWith('620')) {
+                num = '62' + num.slice(3);
+            }
+            if (num.startsWith('0')) {
+                num = '62' + num.slice(1);
+            } else if (num.startsWith('8')) {
+                num = '62' + num;
+            }
+            return num;
+        }
+        
+        const cleanPhone = normalizeWA(senderNumber);
+        
+        const phoneFormats = [
+            cleanPhone,
+            '0' + cleanPhone.slice(2),
+            cleanPhone.slice(2)
+        ];
+        
+        const alumniCol = collection(db, 'alumni');
+        const q = query(alumniCol, where('nowa', 'in', phoneFormats));
+        const snap = await getDocs(q);
+        
+        if (snap.empty) {
+            const msgNotRegistered = `*⚠️ STATUS PENDAFTARAN ALUMNI ⚠️*\n\n` +
+                                     `Nomor WhatsApp Anda (*+${cleanPhone}*) belum terdaftar di sistem reuni.\n\n` +
+                                     `Silakan ketik *daftar* untuk mendaftar secara otomatis langsung dari WhatsApp, atau daftar melalui web portal:\n` +
+                                     `👉 https://phajar.github.io/Reuni/pendaftaran.html`;
+            await sock.sendMessage(jid, { text: msgNotRegistered });
+            return;
+        }
+        
+        const alumnusDoc = snap.docs[0];
+        const alumnusData = alumnusDoc.data();
+        
+        const statusLabel = alumnusData.status === 'approved' ? '🟢 Disetujui / Aktif' : '🟡 Menunggu Peninjauan';
+        const kehadiranLabel = alumnusData.kehadiran === 'hadir' ? '✅ Hadir' : (alumnusData.kehadiran === 'tidak_hadir' ? '❌ Tidak Hadir' : '❓ Belum Konfirmasi');
+        
+        // Cari pembayaran di finance
+        const financeCol = collection(db, 'finance');
+        const qFinance = query(financeCol, where('nowa', 'in', phoneFormats));
+        const financeSnap = await getDocs(qFinance);
+        
+        let totalDonasi = 0;
+        let pendingDonasi = 0;
+        
+        financeSnap.forEach(d => {
+            const fData = d.data();
+            const nom = Number(fData.nominal) || 0;
+            const stat = String(fData.status || '').toLowerCase().trim();
+            if (stat === 'pemasukan' || stat === 'approved') {
+                totalDonasi += nom;
+            } else if (stat === 'pending_payment' || stat === 'pending') {
+                pendingDonasi += nom;
+            }
+        });
+        
+        let paymentStatus = '🔴 Belum Membayar';
+        if (totalDonasi > 0) {
+            paymentStatus = `🟢 Sudah Membayar (Total: ${formatRupiah(totalDonasi)})`;
+        } else if (pendingDonasi > 0) {
+            paymentStatus = `🟡 Menunggu Persetujuan Bendahara (Total: ${formatRupiah(pendingDonasi)})`;
+        }
+        
+        let textStatus = `*📊 STATUS PENDAFTARAN & KEUANGAN ALUMNI 📊*\n\n` +
+                         `👤 *Nama:* ${alumnusData.nama}\n` +
+                         `🎓 *Angkatan:* Lulus Tahun ${alumnusData.angkatan}\n` +
+                         `🏫 *Lembaga:* ${alumnusData.lembaga || '-'}\n` +
+                         `📞 *No. WhatsApp:* +${cleanPhone}\n` +
+                         `📌 *Status Akun:* ${statusLabel}\n` +
+                         `🙋 *Kehadiran:* ${kehadiranLabel}\n` +
+                         `💳 *Status Iuran:* ${paymentStatus}\n\n` +
+                         `Untuk melakukan konfirmasi pembayaran, silakan transfer ke rekening resmi panitia, lalu kirim bukti transfer dengan ketik *!konfirmasi [nominal]*\n` +
+                         `Contoh: *!konfirmasi 100000*`;
+                         
+        await sock.sendMessage(jid, { text: textStatus });
+    } catch (err) {
+        console.error('[WA BOT] Gagal memproses perintah !status:', err);
+        await sock.sendMessage(jid, { text: '⚠️ Terjadi kesalahan saat memeriksa status Anda. Silakan hubungi panitia.' });
     }
 }
 
