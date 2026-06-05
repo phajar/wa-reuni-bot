@@ -2292,7 +2292,7 @@ function initAlumniRegistrationListener(db) {
                 if (data.created_at && data.created_at >= botStartupTime) {
                     console.log(`[WA BOT] New pending alumnus detected: ${data.nama} (ID: ${alumniId})`);
                     
-                    const groupJid = currentBotConfig.approval_group_jid;
+                    const groupJid = currentBotConfig.group_pendataan_jid || currentBotConfig.approval_group_jid;
                     if (groupJid && groupJid.endsWith('@g.us')) {
                         const message = `*📢 PENDAFTARAN ALUMNI BARU 📢*\n\n` +
                                         `Telah terdaftar alumni baru yang memerlukan persetujuan:\n\n` +
@@ -2306,7 +2306,7 @@ function initAlumniRegistrationListener(db) {
                                         `----------------------------------------\n` +
                                         `Reply pesan ini dengan *!setuju-alumni* atau *!approve-alumni* untuk menyetujui pendaftaran.\n` +
                                         `Atau kirim pesan: *!setuju-alumni ${alumniId}*`;
-                        
+                         
                         try {
                             if (sock && connectionStatus === 'open') {
                                 await sock.sendMessage(groupJid, { text: message });
@@ -2316,7 +2316,7 @@ function initAlumniRegistrationListener(db) {
                             console.error('[WA BOT] Gagal mengirim notifikasi registrasi alumni baru ke grup:', err);
                         }
                     } else {
-                        console.warn('[WA BOT] approval_group_jid belum diatur atau bukan JID grup WA valid.');
+                        console.warn('[WA BOT] JID grup pendataan belum diatur atau bukan JID grup WA valid.');
                     }
                 }
             }
@@ -2340,7 +2340,7 @@ function initAuditLogListener(db) {
                 if (data.timestamp && data.timestamp >= botStartupTime) {
                     console.log(`[WA BOT] New audit log detected: ${data.action} by ${data.operator_name}`);
                     
-                    const groupJid = currentBotConfig.approval_group_jid;
+                    const groupJid = currentBotConfig.group_log_jid || currentBotConfig.approval_group_jid;
                     if (groupJid && groupJid.endsWith('@g.us')) {
                         const dateStr = new Date(data.timestamp).toLocaleString('id-ID');
                         const message = `*🛡️ AUDIT LOG: AKTIVITAS OPERATOR 🛡️*\n\n` +
