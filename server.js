@@ -2589,6 +2589,7 @@ async function handleMenuCommand(jid, m) {
                       `├  *!laporan* : Laporan keuangan & 5 transaksi terakhir\n` +
                       `├  *!iuran* : Cara iuran & QRIS dinamis\n` +
                       `├  *!konfirmasi [nominal]* : Lapor bukti transfer\n` +
+                      `├  *!status* : Cek status pendaftaran & iuran Anda\n` +
                       `├  *!menu* : Tampilkan menu ringkas ini\n` +
                       `└  *!help* : Bantuan detail & penjelasan perintah\n\n`;
                       
@@ -2640,6 +2641,8 @@ async function handleHelpCommand(jid, m) {
                       `📩 *!konfirmasi [nominal]*\n` +
                       `Melaporkan bukti transfer. Kirim/lampirkan foto struk transfer Anda dengan caption:\n` +
                       `👉 Contoh: *!konfirmasi 150000*\n\n` +
+                      `📊 *!status*\n` +
+                      `Mengecek status akun pendaftaran, kehadiran, dan status/nominal pembayaran iuran donasi Anda.\n\n` +
                       `📋 *!menu*\n` +
                       `Menampilkan ringkasan seluruh daftar perintah valid.\n\n` +
                       `❓ *!help*\n` +
