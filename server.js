@@ -42,6 +42,19 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getFirestore(firebaseApp);
 
+// Live Configuration Sync (Firestore -> Bot Server memory cache)
+let waApiConfig = {};
+onSnapshot(doc(db, 'settings', 'whatsapp_api'), (snapshot) => {
+    if (snapshot.exists()) {
+        waApiConfig = snapshot.data();
+        console.log('[AUTH] API Configuration loaded/updated from Firestore.');
+    } else {
+        console.warn('[AUTH] Settings whatsapp_api document not found in Firestore.');
+    }
+}, (error) => {
+    console.error('[AUTH] Failed to listen to whatsapp_api config changes:', error);
+});
+
 const AUTH_DIR = path.join(__dirname, 'auth_info');
 let sock = null;
 let qrCode = null;
@@ -361,6 +374,50 @@ startServer();
 
 // --- HTTP ROUTES ---
 
+// Middleware to authenticate requests using API key stored in Firestore settings/whatsapp_api
+function authenticateApiKey(req, res, next) {
+    let clientToken = '';
+    const authHeader = req.headers['authorization'];
+    
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        clientToken = authHeader.substring(7).trim();
+    } else if (req.query && req.query.key) {
+        clientToken = req.query.key.trim();
+    } else if (req.body && req.body.apiKey) {
+        clientToken = req.body.apiKey.trim();
+    }
+
+    // Collect all valid API keys configured in Firestore (supporting URL|API_KEY format)
+    const validKeys = new Set();
+    
+    const checkAndAddKey = (tokenStr) => {
+        if (tokenStr && tokenStr.includes('|')) {
+            const parts = tokenStr.split('|');
+            if (parts[1]) {
+                validKeys.add(parts[1].trim());
+            }
+        }
+    };
+
+    checkAndAddKey(waApiConfig.token_broadcast);
+    checkAndAddKey(waApiConfig.token_keuangan);
+    checkAndAddKey(waApiConfig.token_verifikasi);
+    checkAndAddKey(waApiConfig.local_api_url);
+    
+    // If there are no keys configured with '|' format, allow request for backward compatibility.
+    if (validKeys.size === 0) {
+        return next();
+    }
+
+    if (!clientToken || !validKeys.has(clientToken)) {
+        console.warn(`[AUTH FAILED] Unauthorized access attempt from IP: ${req.ip} to ${req.path}`);
+        return res.status(401).json({ success: false, error: 'Unauthorized: Invalid or missing API Key.' });
+    }
+
+    // Token is valid
+    next();
+}
+
 // Render simple control webpage
 app.get('/', (req, res) => {
     res.send(`
@@ -406,9 +463,15 @@ app.get('/', (req, res) => {
         </div>
         
         <script>
+            const urlParams = new URLSearchParams(window.location.search);
+            const apiKey = urlParams.get('key') || '';
             let lastStatus = '';
             function checkStatus() {
-                fetch('/api/status')
+                const headers = { 'ngrok-skip-browser-warning': 'true' };
+                if (apiKey) {
+                    headers['Authorization'] = 'Bearer ' + apiKey;
+                }
+                fetch('/api/status' + (apiKey ? '?key=' + encodeURIComponent(apiKey) : ''), { headers })
                     .then(res => res.json())
                     .then(data => {
                         document.getElementById('status').innerText = data.status;
@@ -452,7 +515,7 @@ app.get('/', (req, res) => {
 });
 
 // GET Endpoint for status check
-app.get('/api/status', (req, res) => {
+app.get('/api/status', authenticateApiKey, (req, res) => {
     res.json({
         status: connectionStatus,
         qr: qrCode,
@@ -461,7 +524,7 @@ app.get('/api/status', (req, res) => {
 });
 
 // GET Endpoint to fetch participating groups
-app.get('/api/groups', async (req, res) => {
+app.get('/api/groups', authenticateApiKey, async (req, res) => {
     if (connectionStatus !== 'open' || !sock) {
         return res.status(503).json({ success: false, error: 'WhatsApp bot is not connected.' });
     }
@@ -485,7 +548,7 @@ app.get('/api/groups', async (req, res) => {
 });
 
 // GET Endpoint to fetch subscribed newsletters (channels)
-app.get('/api/channels', async (req, res) => {
+app.get('/api/channels', authenticateApiKey, async (req, res) => {
     if (connectionStatus !== 'open' || !sock) {
         return res.status(503).json({ success: false, error: 'WhatsApp bot is not connected.' });
     }
@@ -543,7 +606,7 @@ app.get('/api/channels', async (req, res) => {
 });
 
 // POST Endpoint for phone pairing code request
-app.post('/api/pair', async (req, res) => {
+app.post('/api/pair', authenticateApiKey, async (req, res) => {
     const { phone } = req.body;
     if (!phone) {
         return res.status(400).json({ success: false, error: 'Phone number is required.' });
@@ -569,7 +632,7 @@ app.post('/api/pair', async (req, res) => {
 });
 
 // POST Endpoint to send message
-app.post('/send-message', async (req, res) => {
+app.post('/send-message', authenticateApiKey, async (req, res) => {
     const { phone, message, fileUrl, fileType } = req.body;
 
     if (!phone || !message) {
@@ -664,7 +727,7 @@ app.post('/send-message', async (req, res) => {
 });
 
 // Keep Alive / Wake Up Endpoint
-app.get('/ping', (req, res) => {
+app.get('/ping', authenticateApiKey, (req, res) => {
     res.json({ success: true, status: connectionStatus });
 });
 
