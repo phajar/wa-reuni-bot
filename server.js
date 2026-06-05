@@ -948,10 +948,14 @@ app.post('/api/reset', authenticateApiKey, async (req, res) => {
         // 1. If connected/open, attempt graceful logout
         if (sock) {
             try {
-                await sock.logout();
+                console.log('[WA] Attempting graceful logout (5s timeout)...');
+                await Promise.race([
+                    sock.logout(),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Logout timeout')), 5000))
+                ]);
                 console.log('[WA] Gracefully logged out.');
             } catch (logoutErr) {
-                console.warn('[WA] Graceful logout failed:', logoutErr.message);
+                console.warn('[WA] Graceful logout failed or timed out:', logoutErr.message);
                 try {
                     sock.end();
                 } catch (e) {}
@@ -967,7 +971,10 @@ app.post('/api/reset', authenticateApiKey, async (req, res) => {
         // 3. Clear Firestore session
         try {
             const docRef = doc(db, 'settings', 'wa_session');
-            await setDoc(docRef, {});
+            await Promise.race([
+                setDoc(docRef, {}),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Firestore write timeout')), 3000))
+            ]);
             console.log('[WA] Firestore session cleared.');
         } catch (dbErr) {
             console.error('[WA] Failed to clear Firestore session:', dbErr.message);
