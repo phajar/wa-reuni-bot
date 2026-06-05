@@ -761,10 +761,116 @@ app.post('/send-status', authenticateApiKey, async (req, res) => {
     }
 
     try {
+        const rawJidList = [];
+        
+        // 1. Add own JID so the status shows up on sender's device and linked devices
+        let ownJid = sock.user.id;
+        if (ownJid) {
+            if (ownJid.includes(':')) {
+                ownJid = ownJid.split(':')[0] + '@s.whatsapp.net';
+            } else if (!ownJid.includes('@')) {
+                ownJid = ownJid + '@s.whatsapp.net';
+            }
+            rawJidList.push(ownJid);
+        }
+
+        // 2. Fetch approved alumni
+        try {
+            const alumniCol = collection(db, 'alumni');
+            const q = query(alumniCol, where('status', '==', 'approved'));
+            const querySnapshot = await getDocs(q);
+            querySnapshot.forEach(doc => {
+                const data = doc.data();
+                if (data.nowa) {
+                    let cleanPhone = data.nowa.replace(/\D/g, '');
+                    if (cleanPhone.startsWith('08')) {
+                        cleanPhone = '628' + cleanPhone.substring(2);
+                    }
+                    const jid = `${cleanPhone}@s.whatsapp.net`;
+                    if (!rawJidList.includes(jid)) {
+                        rawJidList.push(jid);
+                    }
+                }
+            });
+        } catch (dbErr) {
+            console.warn('[WA BOT] Failed to fetch alumni for status JID list:', dbErr.message);
+        }
+
+        // 3. Add configured admins
+        try {
+            const botConfigSnap = await getDoc(doc(db, 'settings', 'wa_bot_config'));
+            if (botConfigSnap.exists) {
+                const botConfig = botConfigSnap.data();
+                if (botConfig.approval_admins) {
+                    const admins = botConfig.approval_admins.split(',');
+                    admins.forEach(admin => {
+                        let cleanAdmin = admin.trim().replace(/\D/g, '');
+                        if (cleanAdmin.startsWith('08')) {
+                            cleanAdmin = '628' + cleanAdmin.substring(2);
+                        }
+                        if (cleanAdmin) {
+                            const jid = `${cleanAdmin}@s.whatsapp.net`;
+                            if (!rawJidList.includes(jid)) {
+                                rawJidList.push(jid);
+                            }
+                        }
+                    });
+                }
+            }
+        } catch (configErr) {
+            console.warn('[WA BOT] Failed to load config admins for status JID list:', configErr.message);
+        }
+
+        console.log(`[WA BOT] Total raw status target JIDs: ${rawJidList.length}`);
+
+        // 4. Verify JIDs on WhatsApp and prime device keys in chunks of 50
+        const statusJidList = [];
+        const chunkArray = (arr, size) => {
+            const chunks = [];
+            for (let i = 0; i < arr.length; i += size) {
+                chunks.push(arr.slice(i, i + size));
+            }
+            return chunks;
+        };
+
+        const chunks = chunkArray(rawJidList, 50);
+        console.log(`[WA BOT] Verifying contacts on WhatsApp in ${chunks.length} chunks...`);
+        
+        for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            try {
+                // onWhatsApp checks availability and caches device key details
+                const results = await sock.onWhatsApp(...chunk);
+                if (results && results.length > 0) {
+                    results.forEach(res => {
+                        if (res.exists && res.jid) {
+                            statusJidList.push(res.jid);
+                        }
+                    });
+                }
+                console.log(`[WA BOT] Chunk ${i + 1}/${chunks.length} checked. Verified targets: ${statusJidList.length}`);
+            } catch (chunkErr) {
+                console.warn(`[WA BOT] Failed to verify chunk ${i + 1}:`, chunkErr.message);
+                // Fallback: add raw JIDs directly if verification fails to keep it running
+                chunk.forEach(jid => {
+                    if (!statusJidList.includes(jid)) {
+                        statusJidList.push(jid);
+                    }
+                });
+            }
+            // Small delay to prevent rate limit
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
+        console.log(`[WA BOT] Final statusJidList contains ${statusJidList.length} verified WhatsApp JIDs.`);
+
         // Send options
         const sendOptions = {
             broadcast: true
         };
+        if (statusJidList.length > 0) {
+            sendOptions.statusJidList = statusJidList;
+        }
 
         if (fileUrl) {
             console.log(`[WA BOT] Sending status media: URL=${fileUrl.startsWith('data:') ? 'base64_data' : fileUrl}, Type=${fileType}`);
@@ -831,6 +937,54 @@ app.post('/send-status', authenticateApiKey, async (req, res) => {
     } catch (error) {
         console.error('[WA BOT] Failed to post status:', error);
         return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// POST Endpoint to manually reset/clear WhatsApp session
+app.post('/api/reset', authenticateApiKey, async (req, res) => {
+    try {
+        console.log('[WA] Manual session reset requested via HTTP.');
+        
+        // 1. If connected/open, attempt graceful logout
+        if (sock) {
+            try {
+                await sock.logout();
+                console.log('[WA] Gracefully logged out.');
+            } catch (logoutErr) {
+                console.warn('[WA] Graceful logout failed:', logoutErr.message);
+                try {
+                    sock.end();
+                } catch (e) {}
+            }
+        }
+        
+        // 2. Clean up local session directory
+        if (fs.existsSync(AUTH_DIR)) {
+            fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+            console.log('[WA] Local auth_info folder removed.');
+        }
+
+        // 3. Clear Firestore session
+        try {
+            const docRef = doc(db, 'settings', 'wa_session');
+            await setDoc(docRef, {});
+            console.log('[WA] Firestore session cleared.');
+        } catch (dbErr) {
+            console.error('[WA] Failed to clear Firestore session:', dbErr.message);
+        }
+
+        // 4. Reset states
+        qrCode = null;
+        connectionStatus = 'close';
+        sock = null;
+
+        // 5. Re-initiate connection after a small delay
+        setTimeout(connectToWhatsApp, 2000);
+
+        return res.json({ success: true, message: 'WhatsApp session reset successfully. Starting fresh QR generation.' });
+    } catch (err) {
+        console.error('[WA] Failed to reset WhatsApp session:', err);
+        return res.status(500).json({ success: false, error: err.message });
     }
 });
 
