@@ -1243,7 +1243,12 @@ async function startRegistrationFlow(jid, m) {
         });
 
         await sock.sendMessage(jid, {
-            text: `👋 *Selamat Datang di Pendaftaran Reuni Akbar Ponpes AL-FATAH*\n\nSaya akan memandu Anda untuk mendaftar secara otomatis langsung dari WhatsApp.\n\n👉 *Langkah 1 dari 4*\nSilakan ketik *Nama Lengkap* Anda:`
+            text: `*╭────────────────────────╮*\n` +
+                  `*   👋 DAFTAR REUNI AL-FATAH   *\n` +
+                  `*╰────────────────────────╯*\n\n` +
+                  `Saya akan memandu Anda untuk mendaftar secara otomatis langsung dari WhatsApp.\n\n` +
+                  `👉 *Langkah 1 dari 4*\n` +
+                  `Silakan ketik *Nama Lengkap* Anda:`
         });
     } catch (err) {
         console.error('[WA BOT] Gagal memulai registrasi:', err);
@@ -1275,10 +1280,13 @@ async function handleRegistrationFlow(jid, cleanMsg, m) {
             session.data.nama = capitalizeName(cleanMsg);
             session.step = 2;
             await sock.sendMessage(jid, {
-                text: `👤 *Nama:* ${session.data.nama}\n\n👉 *Langkah 2 dari 4*\nTahun berapa Anda lulus dari Ponpes AL-FATAH?\n(Contoh ketik: *2012* atau *2015*):`
+                text: `👤 *Nama:* ${session.data.nama}\n\n` +
+                      `👉 *Langkah 2 dari 4*\n` +
+                      `Tahun berapa Anda lulus dari Ponpes AL-FATAH?\n` +
+                      `(Contoh ketik: *2012* atau *2015*):`
             });
             break;
-
+ 
         case 2: // Angkatan (Tahun Lulus)
             const angkatanNum = parseInt(cleanMsg.replace(/\D/g, ''), 10);
             if (isNaN(angkatanNum) || angkatanNum < 1970 || angkatanNum > 2030) {
@@ -1288,10 +1296,15 @@ async function handleRegistrationFlow(jid, cleanMsg, m) {
             session.data.angkatan = angkatanNum;
             session.step = 3;
             await sock.sendMessage(jid, {
-                text: `🎓 *Angkatan:* Lulus Tahun ${session.data.angkatan}\n\n👉 *Langkah 3 dari 4*\nPilih Lembaga pendidikan terakhir Anda di Ponpes AL-FATAH:\n1. *MA* (Madrasah Aliyah)\n2. *MTs* (Madrasah Tsanawiyah)\n\n(Silakan ketik angka *1*, *2*, atau tulis langsung *MA* / *MTs*):`
+                text: `🎓 *Angkatan:* Lulus Tahun ${session.data.angkatan}\n\n` +
+                      `👉 *Langkah 3 dari 4*\n` +
+                      `Pilih Lembaga pendidikan terakhir Anda di Ponpes AL-FATAH:\n` +
+                      `1. *MA* (Madrasah Aliyah)\n` +
+                      `2. *MTs* (Madrasah Tsanawiyah)\n\n` +
+                      `(Silakan ketik angka *1*, *2*, atau tulis langsung *MA* / *MTs*):`
             });
             break;
-
+ 
         case 3: // Lembaga (MA / MTs)
             let chosenLembaga = '';
             if (cleanMsg === '1' || textUpper === 'MA') {
@@ -1299,21 +1312,27 @@ async function handleRegistrationFlow(jid, cleanMsg, m) {
             } else if (cleanMsg === '2' || textUpper === 'MTS') {
                 chosenLembaga = 'MTs';
             }
-
+ 
             if (!chosenLembaga) {
                 await sock.sendMessage(jid, {
                     text: `⚠️ *Pilihan tidak valid.*\n\nSilakan pilih Lembaga pendidikan Anda:\n1. *MA* (Madrasah Aliyah)\n2. *MTs* (Madrasah Tsanawiyah)\n\n(Ketik angka *1*, *2*, atau tulis langsung *MA* / *MTs*):`
                 });
                 return;
             }
-
+ 
             session.data.lembaga = chosenLembaga;
             session.step = 4;
             await sock.sendMessage(jid, {
-                text: `🏫 *Lembaga:* ${session.data.lembaga}\n\n👉 *Langkah 4 dari 4*\nSilakan ketik *Alamat Lengkap* Anda saat ini.\n\n*⚠️ KETENTUAN:*\nAlamat harus memuat detail *Dusun/Kampung/Blok*, *RT/RW*, serta *Desa*, *Kecamatan*, dan *Kabupaten*.\n\n*Contoh:*\n_Kp. Babakan RT 02/05 Desa Cadasmekar, Kec. Tegalwaru, Kab. Purwakarta, Jawa Barat_`
+                text: `🏫 *Lembaga:* ${session.data.lembaga}\n\n` +
+                      `👉 *Langkah 4 dari 4*\n` +
+                      `Silakan ketik *Alamat Lengkap* Anda saat ini.\n\n` +
+                      `*⚠️ KETENTUAN:*\n` +
+                      `Alamat harus memuat detail *Dusun/Kampung/Blok*, *RT/RW*, serta *Desa*, *Kecamatan*, dan *Kabupaten*.\n\n` +
+                      `*Contoh:*\n` +
+                      `_Kp. Babakan RT 02/05 Desa Cadasmekar, Kec. Tegalwaru, Kab. Purwakarta, Jawa Barat_`
             });
             break;
-
+ 
         case 4: // Alamat Lengkap & Ekstraksi Wilayah
             await sock.sendMessage(jid, { text: '🔄 _Sedang memproses dan mendeteksi wilayah alamat Anda, mohon tunggu..._' });
             
@@ -1325,7 +1344,7 @@ async function handleRegistrationFlow(jid, cleanMsg, m) {
                     await sock.sendMessage(jid, { text: `${validation.reason}\n\nSilakan tulis kembali alamat lengkap Anda dengan benar:` });
                     return;
                 }
-
+ 
                 // Simpan hasil ekstraksi & alamat raw ke object data (field 'alamat' sesuai skema web)
                 session.data.alamat = cleanMsg;
                 session.data.provinsi = capitalizeName(extracted.provinsi);
@@ -1336,27 +1355,27 @@ async function handleRegistrationFlow(jid, cleanMsg, m) {
                 session.step = 5;
                 
                 // Tampilkan Ringkasan & Konfirmasi
-                const summary = `📝 *RINGKASAN PENDAFTARAN REUNI*
- 
-Silakan periksa kembali data Anda:
-👤 *Nama:* ${session.data.nama}
-🎓 *Angkatan:* Lulus Tahun ${session.data.angkatan}
-🏫 *Lembaga:* ${session.data.lembaga}
-📞 *No. WhatsApp:* +${session.data.nowa}
-📍 *Alamat:* ${session.data.alamat}
-🗺️ *Wilayah Terdeteksi:* Desa ${session.data.desa}, Kec. ${session.data.kecamatan}, Kab. ${session.data.kabupaten}, Prov. ${session.data.provinsi}
- 
-Apakah data di atas sudah benar?
-👉 Ketik *YA* jika sudah benar dan ingin menyimpan.
-👉 Ketik *BATAL* untuk membatalkan pendaftaran.`;
+                const summary = `*╭────────────────────────╮*\n` +
+                                `*   📝 RINGKASAN PENDAFTARAN   *\n` +
+                                `*╰────────────────────────╯*\n\n` +
+                                `Silakan periksa kembali data Anda:\n` +
+                                `👤 *Nama*      : ${session.data.nama}\n` +
+                                `🎓 *Angkatan*  : Lulus Tahun ${session.data.angkatan}\n` +
+                                `🏫 *Lembaga*   : ${session.data.lembaga}\n` +
+                                `📞 *No. WA*    : +${session.data.nowa}\n` +
+                                `📍 *Alamat*    : ${session.data.alamat}\n` +
+                                `🗺️ *Wilayah*    : Desa ${session.data.desa}, Kec. ${session.data.kecamatan}, Kab. ${session.data.kabupaten}, Prov. ${session.data.provinsi}\n\n` +
+                                `Apakah data di atas sudah benar?\n` +
+                                `👉 Ketik *YA* jika sudah benar dan ingin menyimpan.\n` +
+                                `👉 Ketik *BATAL* untuk membatalkan pendaftaran.`;
                 await sock.sendMessage(jid, { text: summary });
             } catch (err) {
                 console.error('[WA BOT] Gagal memproses alamat:', err);
                 await sock.sendMessage(jid, { text: '⚠️ Terjadi kesalahan teknis saat mendeteksi alamat Anda. Silakan ketik kembali alamat lengkap Anda:' });
             }
             break;
-
-        case 5: // Konfirmasi Akhir
+ 
+        case 5: // Konfirmasi Adir
             if (textUpper === 'YA') {
                 try {
                     const alumniCol = collection(db, 'alumni');
@@ -1370,7 +1389,14 @@ Apakah data di atas sudah benar?
                     }
                     
                     await sock.sendMessage(jid, {
-                        text: `🎉 *Alhamdulillah, Pendaftaran Anda Berhasil!* 🎉\n\nData Anda telah tersimpan di sistem dengan status *Menunggu Peninjauan*.\n\n*Langkah Selanjutnya:*\nSilakan lakukan pembayaran kontribusi iuran reuni melalui menu *keuangan* atau ketik *!iuran* untuk melihat rekening bank / QRIS panitia.\n\nKetik *!status* untuk mengecek status pendaftaran Anda secara berkala.\n\nTerima kasih atas partisipasinya!`
+                        text: `*╭────────────────────────╮*\n` +
+                              `*   🎉 PENDAFTARAN BERHASIL!   *\n` +
+                              `*╰────────────────────────╯*\n\n` +
+                              `Alhamdulillah, data Anda telah disimpan di sistem dengan status *Menunggu Peninjauan*.\n\n` +
+                              `*Langkah Selanjutnya:*\n` +
+                              `Silakan lakukan pembayaran kontribusi iuran reuni melalui menu *keuangan* atau ketik *!iuran* untuk melihat rekening bank / QRIS panitia.\n\n` +
+                              `Ketik *!status* untuk mengecek status pendaftaran Anda secara berkala.\n\n` +
+                              `Terima kasih atas partisipasinya!`
                     });
                     
                     regSessions.delete(jid);
@@ -1446,10 +1472,12 @@ async function handleSaldoCommand(jid) {
         });
         
         const saldo = inC - outC;
-        const msg = `*📊 RINGKASAN SALDO KAS REUNI AL-FATAH*\n\n` +
-                    `• *Total Pemasukan* : ${formatRupiah(inC)}\n` +
-                    `• *Total Pengeluaran*: ${formatRupiah(outC)}\n` +
-                    `• *Saldo Kas Riil*  : *${formatRupiah(saldo)}*\n\n` +
+        const msg = `*╭────────────────────────╮*\n` +
+                    `*   📊 SALDO KAS REUNI AL-FATAH  *\n` +
+                    `*╰────────────────────────╯*\n\n` +
+                    `• *Total Pemasukan*   : ${formatRupiah(inC)}\n` +
+                    `• *Total Pengeluaran* : ${formatRupiah(outC)}\n` +
+                    `• *Saldo Kas Riil*    : *${formatRupiah(saldo)}*\n\n` +
                     `_Data di-update secara real-time dari Ledger Keuangan Portal._`;
                     
         await sock.sendMessage(jid, { text: msg });
@@ -1504,11 +1532,12 @@ async function handleLaporanCommand(jid) {
                         `   _${t.kategori}_ | *${tipe}*: ${sign}${formatRupiah(t.nominal)}\n\n`;
         });
         
-        const msg = `*📄 LAPORAN KEUANGAN REUNI AL-FATAH*\n` +
-                    `----------------------------------------\n\n` +
+        const msg = `*╭────────────────────────╮*\n` +
+                    `*  📄 LAPORAN KEUANGAN AL-FATAH  *\n` +
+                    `*╰────────────────────────╯*\n\n` +
                     `*RINGKASAN DANA:*\n` +
-                    `• Realisasi Pemasukan : ${formatRupiah(inC)}\n` +
-                    `• Realisasi Pengeluaran: ${formatRupiah(outC)}\n` +
+                    `• Realisasi Pemasukan    : ${formatRupiah(inC)}\n` +
+                    `• Realisasi Pengeluaran  : ${formatRupiah(outC)}\n` +
                     `• Saldo Kas Riil Saat Ini: *${formatRupiah(saldo)}*\n\n` +
                     `*5 TRANSAKSI TERAKHIR:*\n` +
                     `----------------------------------------\n` +
@@ -1630,7 +1659,9 @@ async function handleIuranCommand(jid) {
                 accountsText = `💳 *BANK MANDIRI*\n• No. Rekening: *1360012345678*\n• Atas Nama: *Bendahara Reuni Al-Fatah*\n\n`;
             }
             
-            iuranMsg = `*✨ INFO METODE PEMBAYARAN IURAN REUNI ✨*\n\n` +
+            iuranMsg = `*╭────────────────────────╮*\n` +
+                       `*    💳 INFO METODE PEMBAYARAN   *\n` +
+                       `*╰────────────────────────╯*\n\n` +
                        `Halo Rekan Alumni/Panitia, berikut adalah metode pembayaran resmi yang terdaftar di sistem kami:\n\n` +
                        accountsText +
                        `Setelah melakukan transfer/scan, mohon konfirmasi & unggah bukti transfer Anda melalui link resmi berikut:\n` +
@@ -2751,14 +2782,16 @@ async function handleStatusCommand(jid, m) {
             paymentStatus = `🟡 Menunggu Persetujuan Bendahara (Total: ${formatRupiah(pendingDonasi)})`;
         }
         
-        let textStatus = `*📊 STATUS PENDAFTARAN & KEUANGAN ALUMNI 📊*\n\n` +
-                         `👤 *Nama:* ${alumnusData.nama}\n` +
-                         `🎓 *Angkatan:* Lulus Tahun ${alumnusData.angkatan}\n` +
-                         `🏫 *Lembaga:* ${alumnusData.lembaga || '-'}\n` +
-                         `📞 *No. WhatsApp:* +${cleanPhone}\n` +
-                         `📌 *Status Akun:* ${statusLabel}\n` +
-                         `🙋 *Kehadiran:* ${kehadiranLabel}\n` +
-                         `💳 *Status Iuran:* ${paymentStatus}\n\n` +
+        let textStatus = `*╭────────────────────────╮*\n` +
+                         `*    📊 STATUS PROFILE ALUMNI    *\n` +
+                         `*╰────────────────────────╯*\n\n` +
+                         `👤 *Nama*        : ${alumnusData.nama}\n` +
+                         `🎓 *Angkatan*    : Lulus Tahun ${alumnusData.angkatan}\n` +
+                         `🏫 *Lembaga*     : ${alumnusData.lembaga || '-'}\n` +
+                         `📞 *No. WhatsApp*: +${cleanPhone}\n` +
+                         `📌 *Status Akun* : ${statusLabel}\n` +
+                         `🙋 *Kehadiran*   : ${kehadiranLabel}\n` +
+                         `💳 *Status Iuran* : ${paymentStatus}\n\n` +
                          `Untuk melakukan konfirmasi pembayaran, silakan transfer ke rekening resmi panitia, lalu kirim bukti transfer dengan ketik *!konfirmasi [nominal]*\n` +
                          `Contoh: *!konfirmasi 100000*`;
                          
