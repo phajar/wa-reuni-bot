@@ -761,62 +761,10 @@ app.post('/send-status', authenticateApiKey, async (req, res) => {
     }
 
     try {
-        // Fetch all approved alumni to form statusJidList
-        const statusJidList = [];
-        try {
-            const alumniCol = collection(db, 'alumni');
-            const q = query(alumniCol, where('status', '==', 'approved'));
-            const querySnapshot = await getDocs(q);
-            querySnapshot.forEach(doc => {
-                const data = doc.data();
-                if (data.nowa) {
-                    let cleanPhone = data.nowa.replace(/\D/g, '');
-                    if (cleanPhone.startsWith('08')) {
-                        cleanPhone = '628' + cleanPhone.substring(2);
-                    }
-                    const jid = `${cleanPhone}@s.whatsapp.net`;
-                    if (!statusJidList.includes(jid)) {
-                        statusJidList.push(jid);
-                    }
-                }
-            });
-            console.log(`[WA BOT] Generated statusJidList with ${statusJidList.length} approved alumni.`);
-        } catch (dbErr) {
-            console.warn('[WA BOT] Failed to fetch alumni for statusJidList:', dbErr.message);
-        }
-
-        // Add standard admin numbers to the list just in case
-        try {
-            const botConfigSnap = await getDoc(doc(db, 'settings', 'wa_bot_config'));
-            if (botConfigSnap.exists) {
-                const botConfig = botConfigSnap.data();
-                if (botConfig.approval_admins) {
-                    const admins = botConfig.approval_admins.split(',');
-                    admins.forEach(admin => {
-                        let cleanAdmin = admin.trim().replace(/\D/g, '');
-                        if (cleanAdmin.startsWith('08')) {
-                            cleanAdmin = '628' + cleanAdmin.substring(2);
-                        }
-                        if (cleanAdmin) {
-                            const jid = `${cleanAdmin}@s.whatsapp.net`;
-                            if (!statusJidList.includes(jid)) {
-                                statusJidList.push(jid);
-                            }
-                        }
-                    });
-                }
-            }
-        } catch (configErr) {
-            console.warn('[WA BOT] Failed to load config admins for statusJidList:', configErr.message);
-        }
-
         // Send options
         const sendOptions = {
             broadcast: true
         };
-        if (statusJidList.length > 0) {
-            sendOptions.statusJidList = statusJidList;
-        }
 
         if (fileUrl) {
             console.log(`[WA BOT] Sending status media: URL=${fileUrl.startsWith('data:') ? 'base64_data' : fileUrl}, Type=${fileType}`);
