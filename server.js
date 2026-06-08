@@ -1163,7 +1163,11 @@ app.listen(PORT, () => {
                     }
                     
                     const finalUrl = key ? `${url}|${key}` : url;
-                    await setDoc(docRef, { local_api_url: finalUrl }, { merge: true });
+                    const token = key || currentData.token_keuangan || '';
+                    await setDoc(docRef, { 
+                        local_api_url: finalUrl,
+                        bot_token: token
+                    }, { merge: true });
                     console.log(`[TUNNEL] Automatically updated local_api_url in Firestore (${source}) to: ${finalUrl}`);
                 } catch (fsErr) {
                     console.error('[TUNNEL] Failed to save tunnel URL to Firestore:', fsErr.message);
