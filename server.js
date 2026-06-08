@@ -1083,44 +1083,94 @@ const PORT = process.env.PORT || 7860;
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
     
-    // Auto-tunneling logic using localtunnel
-    if (localtunnel) {
-        (async () => {
+    // Dual-tunneling logic: Try SSH serveo.net first, fallback to localtunnel if openssh is missing or serveo fails
+    (() => {
+        console.log('[TUNNEL] Attempting to start SSH tunnel via serveo.net...');
+        const { spawn } = require('child_process');
+        let ssh;
+        let isTunnelActive = false;
+
+        try {
+            ssh = spawn('ssh', ['-o', 'StrictHostKeyChecking=no', '-o', 'ServerAliveInterval=30', '-R', '80:localhost:' + PORT, 'serveo.net']);
+            
+            ssh.on('error', (err) => {
+                console.log('[TUNNEL] SSH command failed to start (maybe openssh is not installed). Falling back to localtunnel...');
+                if (!isTunnelActive) startLocaltunnel();
+            });
+
+            ssh.stdout.on('data', (data) => {
+                const text = data.toString();
+                console.log(`[SSH TUNNEL] ${text.trim()}`);
+                const match = text.match(/https:\/\/[a-zA-Z0-9-.]+/);
+                if (match) {
+                    isTunnelActive = true;
+                    console.log(`\n==================================================`);
+                    console.log(`[TUNNEL] PUBLIC URL: ${match[0]}`);
+                    console.log(`==================================================\n`);
+                    updateFirestoreUrl(match[0], 'SSH TUNNEL (serveo.net)');
+                }
+            });
+
+            ssh.stderr.on('data', (data) => {
+                const text = data.toString().trim();
+                if (text) console.log(`[SSH TUNNEL log] ${text}`);
+            });
+
+            ssh.on('close', (code) => {
+                console.log(`[SSH TUNNEL] Closed with exit code ${code}`);
+                if (!isTunnelActive) {
+                    console.log('[TUNNEL] SSH closed without establishing connection. Falling back to localtunnel...');
+                    startLocaltunnel();
+                }
+            });
+        } catch (e) {
+            console.log('[TUNNEL] Failed to spawn SSH process. Falling back to localtunnel...');
+            if (!isTunnelActive) startLocaltunnel();
+        }
+
+        async function startLocaltunnel() {
+            if (!localtunnel) {
+                console.warn('[TUNNEL] localtunnel module is not installed. Auto-tunneling disabled.');
+                return;
+            }
             try {
-                console.log('[TUNNEL] Starting auto-tunneling via localtunnel...');
+                console.log('[TUNNEL] Starting fallback localtunnel...');
                 const tunnel = await localtunnel({ port: PORT });
+                isTunnelActive = true;
                 console.log(`\n==================================================`);
                 console.log(`[TUNNEL] PUBLIC URL: ${tunnel.url}`);
                 console.log(`==================================================\n`);
+                updateFirestoreUrl(tunnel.url, 'Localtunnel');
                 
-                // Wait for Firebase to initialize and sync settings
-                setTimeout(async () => {
-                    try {
-                        const docRef = doc(db, 'settings', 'whatsapp_api');
-                        const docSnap = await getDoc(docRef);
-                        const currentData = docSnap.exists() ? docSnap.data() : {};
-                        
-                        let key = '';
-                        if (currentData.local_api_url && currentData.local_api_url.includes('|')) {
-                            key = currentData.local_api_url.split('|')[1];
-                        }
-                        
-                        const finalUrl = key ? `${tunnel.url}|${key}` : tunnel.url;
-                        await setDoc(docRef, { local_api_url: finalUrl }, { merge: true });
-                        console.log(`[TUNNEL] Automatically updated local_api_url in Firestore to: ${finalUrl}`);
-                    } catch (fsErr) {
-                        console.error('[TUNNEL] Failed to save tunnel URL to Firestore:', fsErr.message);
-                    }
-                }, 5000);
-
                 tunnel.on('close', () => {
                     console.log('[TUNNEL] Localtunnel closed.');
                 });
             } catch (err) {
-                console.error('[TUNNEL] Failed to start localtunnel:', err.message);
+                console.error('[TUNNEL] Fallback localtunnel failed to start:', err.message);
             }
-        })();
-    }
+        }
+
+        function updateFirestoreUrl(url, source) {
+            setTimeout(async () => {
+                try {
+                    const docRef = doc(db, 'settings', 'whatsapp_api');
+                    const docSnap = await getDoc(docRef);
+                    const currentData = docSnap.exists() ? docSnap.data() : {};
+                    
+                    let key = '';
+                    if (currentData.local_api_url && currentData.local_api_url.includes('|')) {
+                        key = currentData.local_api_url.split('|')[1];
+                    }
+                    
+                    const finalUrl = key ? `${url}|${key}` : url;
+                    await setDoc(docRef, { local_api_url: finalUrl }, { merge: true });
+                    console.log(`[TUNNEL] Automatically updated local_api_url in Firestore (${source}) to: ${finalUrl}`);
+                } catch (fsErr) {
+                    console.error('[TUNNEL] Failed to save tunnel URL to Firestore:', fsErr.message);
+                }
+            }, 5000);
+        }
+    })();
 });
 
 // --- INDONESIAN ADMINISTRATIVE DISTRICT EXTRACTOR ENGINE ---
