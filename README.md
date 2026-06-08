@@ -1,187 +1,184 @@
-# 🟢 WhatsApp Bot & API Gateway — Panduan Instalasi Lengkap
+# 🟢 WhatsApp Bot & API Gateway — Panduan Instalasi Lengkap (PC, VPS, & Android Termux)
 
-Dokumen ini berisi panduan langkah demi langkah untuk menginstal, mengonfigurasi, dan menjalankan **WhatsApp Gateway & Bot Interaktif** PP Al-Fatah dari awal (clean install) pada perangkat Windows atau server VPS.
+Dokumen ini berisi panduan langkah demi langkah untuk menginstal, mengonfigurasi, dan menjalankan **WhatsApp Gateway & Bot Interaktif** PP Al-Fatah dari awal (clean install) pada perangkat Windows/Linux VPS, serta panduan khusus instalasi di **HP Android menggunakan Termux**.
 
 ---
 
 ## 📋 Daftar Isi
 1. [Prasyarat Sistem](#1-prasyarat-sistem)
-2. [Langkah 1: Persiapan Direktori & Kloning](#2-langkah-1-persiapan-direktori)
-3. [Langkah 2: Instalasi NodeJS & NPM](#3-langkah-2-instalasi-nodejs)
-4. [Langkah 3: Instalasi Dependencies](#4-langkah-3-instalasi-dependencies)
-5. [Langkah 4: Konfigurasi File Environment (.env)](#5-langkah-4-konfigurasi-file-env)
-6. [Langkah 5: Menjalankan Server Bot](#6-langkah-5-menjalankan-server-bot)
-7. [Langkah 6: Menghubungkan Akun WhatsApp (Scan QR / Pairing Code)](#7-langkah-6-menghubungkan-akun-whatsapp)
-8. [Langkah 7: Sinkronisasi dengan Admin Panel Web](#8-langkah-7-sinkronisasi-dengan-admin-panel-web)
-9. [🛠️ Troubleshooting & Solusi Error](#-troubleshooting--solusi-error)
+2. [Langkah Instalasi di HP Android (Termux)](#2-langkah-instalasi-di-hp-android-termux)
+3. [Langkah Instalasi di PC / Server VPS](#3-langkah-instalasi-di-pc--server-vps)
+4. [Konfigurasi File Environment (.env)](#4-konfigurasi-file-environment-env)
+5. [Menghubungkan Akun WhatsApp (Scan QR / Pairing Code)](#5-menghubungkan-akun-whatsapp)
+6. [Sinkronisasi dengan Admin Panel Web](#6-sinkronisasi-dengan-admin-panel-web)
+7. [🛠️ Troubleshooting & Solusi Error](#-troubleshooting--solusi-error)
 
 ---
 
 ## 1. Prasyarat Sistem
 
 Sebelum melakukan instalasi, pastikan perangkat Anda memenuhi persyaratan minimum berikut:
-*   **Operating System**: Windows 10/11, macOS, atau Linux (Ubuntu 20.04 LTS atau lebih baru sangat direkomendasikan untuk VPS).
-*   **Node.js**: Versi **16.x** atau **18.x** atau **20.x** (LTS terbaru direkomendasikan).
-*   **Git**: Untuk sinkronisasi kode dari repositori GitHub (opsional, bisa unduh zip).
+*   **PC/Server**: Windows 10/11, macOS, atau Linux VPS (Ubuntu 20.04 LTS atau lebih baru).
+*   **Android (Termux)**: Android versi 7.0 atau lebih baru dengan ruang penyimpanan kosong minimal 1GB.
+*   **Node.js**: Versi **16.x**, **18.x**, atau **20.x** (LTS terbaru direkomendasikan).
 *   **WhatsApp Active**: Akun WhatsApp aktif di smartphone untuk ditautkan sebagai host API.
 
 ---
 
-## 2. Langkah 1: Persiapan Direktori
+## 2. Langkah Instalasi di HP Android (Termux)
 
-Buka Terminal (Terminal macOS/Linux atau CMD/PowerShell di Windows), lalu masuk to folder proyek bot:
+Panduan ini ditujukan bagi Anda yang ingin menjalankan server WhatsApp Bot langsung dari HP Android secara mandiri menggunakan emulator terminal **Termux**.
 
+> [!IMPORTANT]
+> **PENTING**: Jangan unduh Termux dari Google Play Store karena versinya sudah usang dan repositorinya rusak. Unduh Termux versi terbaru melalui link resmi [F-Droid Termux](https://f-droid.org/en/packages/termux/).
+
+### Langkah 1: Update & Upgrade Sistem Termux
+Buka aplikasi Termux baru di HP Anda, lalu jalankan perintah berikut secara berurutan:
 ```bash
-# Jika Anda mengunduh seluruh proyek alumni-web, masuk ke sub-folder bot:
-cd c:/Users/Ahmad/Downloads/alumni web/whatsapp-bot
+pkg update -y && pkg upgrade -y
+```
+*Jika muncul konfirmasi pilihan `[Y/n]`, ketik `y` lalu tekan Enter.*
 
-# Atau jika Anda baru saja mengkloning repositori ini secara terpisah:
+### Langkah 2: Berikan Izin Akses Penyimpanan (Storage)
+Jalankan perintah berikut agar Termux dapat membaca file di HP Anda:
+```bash
+termux-setup-storage
+```
+*Ketuk **Izinkan** pada jendela pop-up android yang muncul.*
+
+### Langkah 3: Pasang Paket Pendukung & NodeJS
+Pasang Git, NodeJS, Python, dan kompilator C++ (diperlukan untuk mengompilasi modul kompresi gambar `sharp` di arsitektur prosesor ARM HP Android):
+```bash
+pkg install git nodejs-lts build-essential python binutils -y
+```
+
+### Langkah 4: Kloning Repositori Bot
+Unduh file proyek bot dari GitHub ke penyimpanan lokal Termux Anda:
+```bash
 git clone https://github.com/phajar/wa-reuni-bot.git
 cd wa-reuni-bot
 ```
 
----
-
-## 3. Langkah 2: Instalasi NodeJS
-
-Jika Anda belum memiliki Node.js, silakan unduh dan instal terlebih dahulu:
-1. Buka situs resmi [Node.js Downloads](https://nodejs.org/).
-2. Unduh versi **LTS** (Recommended for Most Users).
-3. Jalankan installer dan ikuti wizard instalasi sampai selesai.
-4. Verifikasi instalasi di terminal dengan menjalankan:
-   ```bash
-   node -v
-   npm -v
-   ```
-   *Jika versi Node muncul (misal `v18.16.0`), maka Node.js sudah terpasang dengan benar.*
-
----
-
-## 4. Langkah 3: Instalasi Dependencies
-
-Jalankan perintah berikut di dalam terminal untuk mengunduh dan memasang library modul yang dibutuhkan oleh server WhatsApp Baileys:
-
+### Langkah 5: Pasang Modul Dependencies
+Jalankan perintah ini untuk memasang modul nodejs:
 ```bash
 npm install
 ```
-
 > [!TIP]
-> Perintah di atas akan membaca file `package.json` dan otomatis memasang library penting seperti:
-> *   `@whiskeysockets/baileys` (Konektor WhatsApp Web API)
-> *   `express` & `cors` (Server HTTP API Gateway)
-> *   `firebase` (Sinkronisasi database Firestore)
-> *   `sharp` (Pemroses/kompresi gambar bukti transfer)
-> *   `tesseract.js` (AI OCR untuk scan nominal struk)
+> Jika instalasi modul `sharp` mengalami error saat kompilasi di Termux, jalankan perintah pemasangan library pembantu berikut terlebih dahulu:
+> `pkg install libvips -y`
+> Kemudian jalankan ulang `npm install`.
 
----
-
-## 5. Langkah 4: Konfigurasi File Env (`.env`)
-
-Buat berkas baru bernama **`.env`** di dalam folder root `whatsapp-bot/` (satu tingkat dengan `server.js`). Isi file tersebut dengan kredensial Firebase dan Cloudinary Anda:
-
+### Langkah 6: Membuat File Konfigurasi `.env`
+Pasang teks editor `nano` untuk membuat berkas pengaturan:
+```bash
+pkg install nano -y
+nano .env
+```
+Salin dan tempel konfigurasi Firebase/Cloudinary Anda di bawah ini ke dalam nano editor (sesuaikan nilainya):
 ```env
-# Port tempat server WhatsApp Bot berjalan (Default: 7860)
 PORT=7860
-
-# Konfigurasi Firebase Firestore (Dapatkan dari Console Firebase Anda)
 FIREBASE_API_KEY=AIzaSyCfZ9zV6DOuSZoFoFvkW8NCSaxNlmn8R8k
 FIREBASE_AUTH_DOMAIN=reuniakbar.firebaseapp.com
 FIREBASE_PROJECT_ID=reuniakbar
 FIREBASE_STORAGE_BUCKET=reuniakbar.firebasestorage.app
 FIREBASE_MESSAGING_SENDER_ID=542951643652
 FIREBASE_APP_ID=1:542951643652:web:1b4b7dac6c676a5d6c3351
+CLOUDINARY_CLOUD_NAME=dowih3wr7
+CLOUDINARY_UPLOAD_PRESET=Reuniakbar
+```
+*Untuk menyimpan di nano editor: Tekan tombol volume bawah HP + O secara bersamaan, lalu Enter. Untuk keluar editor: Tekan tombol volume bawah HP + X.*
 
-# Konfigurasi Cloudinary (Untuk menyimpan file bukti struk verifikasi)
+### Langkah 7: Menjalankan WhatsApp Bot
+Jalankan server utama:
+```bash
+node server.js
+```
+Server bot Anda sekarang aktif di latar belakang HP pada port `7860`. Lanjutkan ke bagian [Menghubungkan Akun WhatsApp](#5-menghubungkan-akun-whatsapp).
+
+---
+
+## 3. Langkah Instalasi di PC / Server VPS
+
+Jika Anda ingin memasang di Windows PC atau Linux VPS:
+
+1.  Masuk ke direktori bot:
+    ```bash
+    cd c:/Users/Ahmad/Downloads/alumni web/whatsapp-bot
+    ```
+2.  Pastikan Node.js sudah terpasang, lalu instal dependencies:
+    ```bash
+    npm install
+    ```
+3.  Buat berkas `.env` di folder ini seperti contoh di bagian [Konfigurasi `.env`](#4-konfigurasi-file-environment-env).
+4.  Jalankan server:
+    *   **Via Terminal**: `npm start`
+    *   **Via Windows Shortcut (Double Click)**: Jalankan berkas **`jalankan-whatsapp.bat`** di folder root proyek utama.
+
+---
+
+## 4. Konfigurasi File Environment (`.env`)
+
+Kredensial Firebase & Cloudinary yang diletakkan di berkas `.env`:
+
+```env
+PORT=7860
+FIREBASE_API_KEY=AIzaSyCfZ9zV6DOuSZoFoFvkW8NCSaxNlmn8R8k
+FIREBASE_AUTH_DOMAIN=reuniakbar.firebaseapp.com
+FIREBASE_PROJECT_ID=reuniakbar
+FIREBASE_STORAGE_BUCKET=reuniakbar.firebasestorage.app
+FIREBASE_MESSAGING_SENDER_ID=542951643652
+FIREBASE_APP_ID=1:542951643652:web:1b4b7dac6c676a5d6c3351
 CLOUDINARY_CLOUD_NAME=dowih3wr7
 CLOUDINARY_UPLOAD_PRESET=Reuniakbar
 ```
 
-> [!WARNING]
-> Jangan pernah mengunggah file `.env` ini ke repositori publik GitHub Anda karena berisi kunci rahasia API database Anda. File ini sudah otomatis dimasukkan ke dalam `.gitignore`.
+---
+
+## 5. Menghubungkan Akun WhatsApp
+
+1.  Buka web browser di HP/PC Anda dan akses dashboard web bot:
+    👉 **`http://localhost:7860`**
+2.  **Scan QR Code**: Jika status menampilkan **`qr`**, buka WhatsApp di smartphone Anda &rarr; Ketuk tiga titik di kanan atas &rarr; **Perangkat Tertaut** &rarr; Ketuk **Tautkan Perangkat** &rarr; Scan kode QR yang tampil di browser.
+3.  **Tautkan Menggunakan Pairing Code (Tanpa Scan QR)**:
+    Kirim request API menggunakan Postman, cURL, atau terminal Termux tab baru:
+    *   **Endpoint**: `POST http://localhost:7860/api/pair`
+    *   **Payload**: `{ "phone": "628123456789" }`
+    *   Masukkan kode alphanumeric yang diterima di HP Anda pada menu tautkan perangkat WhatsApp.
 
 ---
 
-## 6. Langkah 5: Menjalankan Server Bot
+## 6. Sinkronisasi dengan Admin Panel Web
 
-Setelah dependencies terpasang dan `.env` selesai dikonfigurasi, Anda dapat menyalakan server dengan salah satu cara berikut:
-
-### Opsi A: Jalankan langsung dari Terminal
-```bash
-npm start
-```
-
-### Opsi B: Jalankan menggunakan pintasan Windows Shortcut (Double Click)
-Di folder root aplikasi utama, Anda cukup mengeklik ganda file pintasan berikut:
-*   **`jalankan-whatsapp.bat`**
-
-Saat pertama kali berjalan, server akan:
-1. Membuka koneksi DNS dan memeriksa port `7860`.
-2. Mencoba mengunduh file sesi cadangan dari Firestore document `/settings/wa_session` (jika ada).
-3. Menampilkan status koneksi awal di konsol log.
-
----
-
-## 7. Langkah 6: Menghubungkan Akun WhatsApp
-
-Untuk mengaitkan WhatsApp Anda sebagai host pengirim pesan:
-
-1. Buka browser di komputer Anda dan akses URL panel kontrol lokal bot:
-   👉 **`http://localhost:7860`**
-2. Anda akan melihat halaman dashboard utama server WhatsApp Gateway.
-3. **Scan Kode QR**: Jika status menampilkan **`qr`**, sebuah Kode QR akan muncul di layar. Buka WhatsApp di HP Anda &rarr; Klik **Perangkat Tertaut** &rarr; Ketuk **Tautkan Perangkat** &rarr; Scan QR Code di browser.
-4. **Gunakan Pairing Code (Alternatif)**: Jika Anda ingin menautkan perangkat dari jarak jauh menggunakan nomor HP tanpa scan QR, gunakan API endpoint berikut melalui client API (seperti Postman atau cURL):
-   *   **Endpoint**: `POST http://localhost:7860/api/pair`
-   *   **Payload**: `{ "phone": "628123456789" }`
-   *   **Response**: `{ "success": true, "code": "ABC-123-XYZ" }` (Masukkan kode ini di WhatsApp HP Anda).
-
-Setelah berhasil masuk, status di dashboard akan berubah menjadi **`open`** dan menampilkan nomor WhatsApp yang aktif terhubung.
-
----
-
-## 8. Langkah 7: Sinkronisasi dengan Admin Panel Web
-
-Langkah terakhir adalah mendaftarkan URL server bot lokal Anda ke aplikasi web admin utama:
-
-1. Masuk ke **Admin Panel Web** alumni (`http://localhost:3000` atau URL hosting web admin).
-2. Buka menu **WhatsApp Center** &rarr; tab **Cloud API Gateway**.
-3. Di bidang input **URL API WhatsApp Lokal**, masukkan alamat server bot Anda:
-   *   **Format**: `http://localhost:7860`
-   *   *Catatan: Jika Anda menyetel pengaman kunci API (Bearer Token), gunakan format: `http://localhost:7860|kunci_keamanan_anda`.*
-4. Klik **Simpan Pengaturan Gateway**.
-5. Buka tab **Local Bot Server** di menu kiri WhatsApp Center untuk melihat status real-time, grafik ram/cpu bot, log pengiriman pesan, atau melakukan restart sesi/logout dari admin panel secara langsung.
+1.  Masuk ke halaman **Admin Panel Web** alumni (`http://localhost:3000` atau domain hosting Anda).
+2.  Buka menu **WhatsApp Center** &rarr; tab **Cloud API Gateway**.
+3.  Isi kolom **URL API WhatsApp Lokal** dengan alamat server bot Anda (misal: `http://localhost:7860` atau IP HP Anda di jaringan lokal).
+4.  Klik **Simpan Pengaturan Gateway**.
 
 ---
 
 ## 🛠️ Troubleshooting & Solusi Error
 
-### 1. Error: `Cannot find module '@whiskeysockets/baileys'` atau Modul Lainnya
-*   **Sebab**: Proses instalasi dependencies gagal tengah jalan atau belum dilakukan.
-*   **Solusi**: Hapus folder `node_modules` dan jalankan ulang perintah `npm install` dalam kondisi koneksi internet yang stabil.
+### 1. Termux Mati Saat Layar HP Mati (Sleep Mode)
+*   **Sebab**: Android secara agresif mematikan proses latar belakang untuk menghemat baterai.
+*   **Solusi**:
+    1. Tarik bar notifikasi atas HP Anda, temukan notifikasi Termux, lalu klik **"Acquire wake lock"**.
+    2. Masuk ke Pengaturan Baterai HP Anda &rarr; **Optimasi Baterai** &rarr; Cari **Termux** &rarr; Setel ke **"Jangan Optimalkan"** (Don't Optimize / Unrestricted).
+
+### 2. Menjaga Bot Tetap Hidup Terus-Menerus di Latar Belakang (PM2)
+Pasang package manager proses PM2 agar bot dapat terus berjalan otomatis meskipun terjadi error/crash:
+```bash
+npm install -g pm2
+pm2 start server.js --name wa-bot
+pm2 save
+pm2 startup
+```
+*Untuk melihat status: `pm2 status` | Untuk melihat logs: `pm2 logs wa-bot`*
+
+### 3. Error: `Cannot find module '@whiskeysockets/baileys'`
+*   **Sebab**: Instalasi NPM terputus.
+*   **Solusi**: Hapus folder `node_modules` lalu jalankan kembali `npm install`.
     ```bash
-    rmdir /s /q node_modules
+    rm -rf node_modules
     npm install
     ```
-
-### 2. Error: `EADDRINUSE: address already in use :::7860`
-*   **Sebab**: Port `7860` sedang digunakan oleh proses node lain atau aplikasi lain di komputer Anda.
-*   **Solusi**: Ubah nilai `PORT` di file `.env` menjadi port lain (misal: `PORT=7865`), lalu restart server. Jangan lupa perbarui juga alamat gateway di Admin Panel Web menjadi `http://localhost:7865`.
-
-### 3. Masalah: Sesi WhatsApp Sering Terputus (Log Out Sendiri)
-*   **Sebab**: Folder `auth_info` terhapus secara tidak sengaja, atau memori server VPS terlalu penuh sehingga mematikan thread Baileys.
-*   **Solusi**: Bot ini sudah dilengkapi fitur **Cloud Sync Firestore**. Sesi akan otomatis dicadangkan setiap 10 detik ke Firestore. Jika bot dimulai ulang atau dipindahkan ke server baru, sesi akan otomatis terunduh kembali secara aman asalkan dokumen Firestore `/settings/wa_session` tidak dihapus.
-
-### 4. Error saat Memproses Gambar pada Server Linux VPS (`sharp` / image processing crash)
-*   **Sebab**: VPS Linux memerlukan library OS tambahan untuk menjalankan plugin kompresi gambar `sharp`.
-*   **Solusi**: Jalankan perintah berikut di server VPS Anda sebelum menjalankan `npm install`:
-    ```bash
-    sudo apt-get update
-    sudo apt-get install -y build-essential libvips-dev
-    ```
-
----
-
-## 📂 Struktur Berkas Penting
-*   `server.js`: Logika utama server gateway, pendaftaran listener Firestore (donasi masuk, verifikasi manual), dan routing REST API.
-*   `.env`: Berkas konfigurasi Firebase dan Cloudinary (dibuat manual).
-*   `auth_info/`: Folder kredensial sesi WhatsApp host (dibuat otomatis oleh Baileys). **Dilarang membagikan isi folder ini!**
-*   `package.json`: Manifes proyek dan versi dependencies library.
