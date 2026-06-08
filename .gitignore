@@ -3,3 +3,6 @@ auth_info/
 test_logo.js
 temp_query.js
 check-user.js
+.env
+*.lock
+scratch/

@@ -9,10 +9,12 @@
   "dependencies": {
     "@whiskeysockets/baileys": "^6.6.0",
     "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
     "express": "^4.19.2",
     "firebase": "^10.8.1",
     "node-cron": "^4.2.1",
     "pino": "^8.19.0",
-    "sharp": "^0.34.5"
+    "sharp": "^0.34.5",
+    "tesseract.js": "^7.0.0"
   }
 }
