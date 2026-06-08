@@ -6,6 +6,13 @@ const pino = require('pino');
 const dns = require('dns');
 const sharp = require('sharp');
 
+let localtunnel;
+try {
+    localtunnel = require('localtunnel');
+} catch (e) {
+    console.log('[TUNNEL] localtunnel module not installed. You can run "npm install localtunnel" to enable auto-tunneling.');
+}
+
 // Prevent Node.js process from crashing on unhandled socket/network exceptions
 process.on('uncaughtException', (err) => {
     console.error('[WA BOT] Uncaught Exception caught globally:', err);
@@ -1075,6 +1082,45 @@ app.get('/ping', authenticateApiKey, (req, res) => {
 const PORT = process.env.PORT || 7860;
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
+    
+    // Auto-tunneling logic using localtunnel
+    if (localtunnel) {
+        (async () => {
+            try {
+                console.log('[TUNNEL] Starting auto-tunneling via localtunnel...');
+                const tunnel = await localtunnel({ port: PORT });
+                console.log(`\n==================================================`);
+                console.log(`[TUNNEL] PUBLIC URL: ${tunnel.url}`);
+                console.log(`==================================================\n`);
+                
+                // Wait for Firebase to initialize and sync settings
+                setTimeout(async () => {
+                    try {
+                        const docRef = doc(db, 'settings', 'whatsapp_api');
+                        const docSnap = await getDoc(docRef);
+                        const currentData = docSnap.exists() ? docSnap.data() : {};
+                        
+                        let key = '';
+                        if (currentData.local_api_url && currentData.local_api_url.includes('|')) {
+                            key = currentData.local_api_url.split('|')[1];
+                        }
+                        
+                        const finalUrl = key ? `${tunnel.url}|${key}` : tunnel.url;
+                        await setDoc(docRef, { local_api_url: finalUrl }, { merge: true });
+                        console.log(`[TUNNEL] Automatically updated local_api_url in Firestore to: ${finalUrl}`);
+                    } catch (fsErr) {
+                        console.error('[TUNNEL] Failed to save tunnel URL to Firestore:', fsErr.message);
+                    }
+                }, 5000);
+
+                tunnel.on('close', () => {
+                    console.log('[TUNNEL] Localtunnel closed.');
+                });
+            } catch (err) {
+                console.error('[TUNNEL] Failed to start localtunnel:', err.message);
+            }
+        })();
+    }
 });
 
 // --- INDONESIAN ADMINISTRATIVE DISTRICT EXTRACTOR ENGINE ---
