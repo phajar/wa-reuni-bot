@@ -1163,7 +1163,7 @@ app.listen(PORT, () => {
                     }
                     
                     const finalUrl = key ? `${url}|${key}` : url;
-                    const token = key || currentData.token_keuangan || '';
+                    const token = currentData.token_keuangan || '';
                     await setDoc(docRef, { 
                         local_api_url: finalUrl,
                         bot_token: token
