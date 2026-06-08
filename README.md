@@ -94,7 +94,12 @@ Jalankan server utama:
 ```bash
 node server.js
 ```
-Server bot Anda sekarang aktif di latar belakang HP pada port `7860`. Lanjutkan ke bagian [Menghubungkan Akun WhatsApp](#5-menghubungkan-akun-whatsapp).
+Server bot Anda sekarang aktif di HP pada port `7860`.
+
+> [!NOTE]
+> **🚀 Fitur Auto-Tunneling (Otomatis Online)**:
+> Saat Anda menjalankan `node server.js`, bot akan **otomatis membuat tunneling publik (localtunnel)** secara mandiri dan memperbarui URL tersebut langsung ke Firestore (`settings/whatsapp_api` -> `local_api_url`). 
+> Anda **TIDAK PERLU** mengaktifkan tunneling manual atau menyalin-tempel link baru ke Admin Panel Web. Semua berjalan secara otomatis!
 
 ---
 
