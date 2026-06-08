@@ -187,3 +187,15 @@ pm2 startup
     rm -rf node_modules
     npm install
     ```
+
+### 4. Error: `Could not load the "sharp" module using the android-arm runtime` atau `EBADPLATFORM` (Termux)
+*   **Sebab**: Modul pengolah gambar `sharp` gagal memuat addon native C++ karena perbedaan arsitektur CPU HP Android (`arm/arm64`), atau proses kompilasi native terhambat karena meminta dependensi `node-addon-api` / `node-gyp`.
+*   **Solusi**: Paksa instalasi menggunakan modul **WebAssembly** yang tidak memerlukan kompilasi lokal di HP dengan mengabaikan pembatasan platform (`--force`):
+    ```bash
+    # Cara A: Paksa pasang modul WebAssembly
+    npm install @img/sharp-wasm32 --force
+    
+    # Cara B: Jalankan manual instruksi spesifik CPU dari sharp
+    npm install --cpu=wasm32 sharp
+    ```
+
