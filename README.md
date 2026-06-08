@@ -97,9 +97,11 @@ node server.js
 Server bot Anda sekarang aktif di HP pada port `7860`.
 
 > [!NOTE]
-> **🚀 Fitur Auto-Tunneling (Otomatis Online)**:
-> Saat Anda menjalankan `node server.js`, bot akan **otomatis membuat tunneling publik (localtunnel)** secara mandiri dan memperbarui URL tersebut langsung ke Firestore (`settings/whatsapp_api` -> `local_api_url`). 
-> Anda **TIDAK PERLU** mengaktifkan tunneling manual atau menyalin-tempel link baru ke Admin Panel Web. Semua berjalan secara otomatis!
+> **🚀 Fitur Auto-Tunneling (Otomatis Online / Dual-Mode)**:
+> Saat Anda menjalankan `node server.js`, bot akan **otomatis membuat tunneling publik** secara mandiri dengan urutan:
+> 1. Mencoba membuat SSH tunnel stabil via **`serveo.net`** (memerlukan paket `openssh` terpasang di HP).
+> 2. Jika SSH gagal atau tidak terpasang, sistem otomatis beralih (*fallback*) ke **`localtunnel`** (WebAssembly).
+> Setelah terowongan terbentuk, sistem akan otomatis memperbarui URL baru tersebut ke dokumen Firestore (`settings/whatsapp_api` -> `local_api_url`) beserta kunci keamanan API Anda. Anda tidak perlu menyalin-tempel link baru apa pun!
 
 ---
 
